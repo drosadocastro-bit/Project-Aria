@@ -18,6 +18,20 @@ else:
     OBD_AVAILABLE = False
 
 
+def auto_detect_obd_port():
+    """Auto-detect OBD-II COM port on Windows."""
+    try:
+        import serial.tools.list_ports
+        ports = serial.tools.list_ports.comports()
+        for port in ports:
+            if "Bluetooth" in port.description or "OBD" in port.description:
+                print(f"📡 Found OBD device: {port.device} ({port.description})")
+                return port.device
+    except:
+        pass
+    return None
+
+
 class OBDMonitor:
     """Monitor GTI via OBD-II on Windows."""
     
@@ -31,15 +45,35 @@ class OBDMonitor:
     def connect(self):
         """Connect to OBD-II adapter."""
         try:
-            print(f"🔌 Attempting OBD-II connection on {OBD_PORT}...")
+            port_to_use = OBD_PORT
+            
+            # Check for auto-detection
+            if OBD_PORT.upper() == "AUTO":
+                print("🔍 Auto-detecting OBD-II port...")
+                port_to_use = auto_detect_obd_port()
+                if not port_to_use:
+                    print("❌ Auto-detection failed. No OBD-II device found.")
+                    print("   Set specific COM port in config.py")
+                    return
+            
+            print(f"🔌 Attempting OBD-II connection on {port_to_use}...")
             
             # Try specified port
-            self.connection = obd.OBD(portstr=OBD_PORT, baudrate=OBD_BAUDRATE, timeout=5)
+            self.connection = obd.OBD(portstr=port_to_use, baudrate=OBD_BAUDRATE, timeout=5)
             
             if not self.connection.is_connected():
-                # Try auto-connect (will scan all COM ports)
-                print("⚠️ Trying auto-connect (this may take a moment)...")
-                self.connection = obd.OBD()
+                # Try auto-connect if configured port failed
+                print("⚠️ Configured port failed. Trying auto-detection...")
+                detected_port = auto_detect_obd_port()
+                
+                if detected_port and detected_port != port_to_use:
+                    print(f"🔄 Retrying with detected port: {detected_port}")
+                    self.connection = obd.OBD(portstr=detected_port, baudrate=OBD_BAUDRATE, timeout=5)
+                
+                if not self.connection.is_connected():
+                    # Last resort: full auto-scan
+                    print("⚠️ Trying full auto-connect scan (this may take a moment)...")
+                    self.connection = obd.OBD()
             
             self.connected = self.connection.is_connected()
             
@@ -54,6 +88,7 @@ class OBDMonitor:
                 print("   2. Verify Bluetooth pairing")
                 print("   3. Check COM port in Device Manager")
                 print(f"   4. Current port setting: {OBD_PORT}")
+                print("   5. Try setting OBD_PORT = 'AUTO' in config.py")
                 
         except Exception as e:
             print(f"❌ OBD-II error: {e}")

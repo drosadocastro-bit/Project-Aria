@@ -73,6 +73,18 @@ Use this information to answer accurately."""
 
 # ========== LLM (LM Studio) ==========
 
+def test_lm_studio_connection():
+    """Test if LM Studio is running and accessible."""
+    try:
+        test_url = LM_STUDIO_API.replace("/v1/chat/completions", "/v1/models")
+        response = requests.get(test_url, timeout=2)
+        if response.status_code == 200:
+            return True
+        return False
+    except:
+        return False
+
+
 def chat_with_lm_studio(message):
     """Chat using LM Studio."""
     
@@ -202,6 +214,25 @@ async def start_websocket_server():
         print("❌ websockets not installed. Run: pip install websockets")
         return
     
+    # Test LM Studio connection
+    print("🔍 Checking LM Studio connection...")
+    if not test_lm_studio_connection():
+        print("❌ Cannot connect to LM Studio!")
+        print(f"   Expected at: {LM_STUDIO_API}")
+        print("\nPlease:")
+        print("1. Start LM Studio")
+        print("2. Load model: google/gemma-3n-e4b")
+        print("3. Enable Local Server in LM Studio settings")
+        input("\nPress Enter when ready...")
+        
+        # Try again
+        if not test_lm_studio_connection():
+            print("❌ Still cannot connect. Exiting.")
+            sys.exit(1)
+
+    print("✅ LM Studio connected")
+    print(f"   Model: {LM_STUDIO_MODEL}\n")
+    
     server = await websockets.serve(
         handle_websocket,
         WEBSOCKET_HOST,
@@ -225,6 +256,25 @@ async def start_websocket_server():
 def console_mode():
     """Original console chat mode."""
     global current_language, current_personality
+    
+    # Test LM Studio connection
+    print("🔍 Checking LM Studio connection...")
+    if not test_lm_studio_connection():
+        print("❌ Cannot connect to LM Studio!")
+        print(f"   Expected at: {LM_STUDIO_API}")
+        print("\nPlease:")
+        print("1. Start LM Studio")
+        print("2. Load model: google/gemma-3n-e4b")
+        print("3. Enable Local Server in LM Studio settings")
+        input("\nPress Enter when ready...")
+        
+        # Try again
+        if not test_lm_studio_connection():
+            print("❌ Still cannot connect. Exiting.")
+            sys.exit(1)
+
+    print("✅ LM Studio connected")
+    print(f"   Model: {LM_STUDIO_MODEL}\n")
     
     persona = PERSONALITIES[current_personality]
     print(f"\n💜 {persona['name']} - {persona['description']}")
