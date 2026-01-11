@@ -1,0 +1,56 @@
+# Project Aria - Ignore patterns
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# Audio queue (generated files)
+queue/
+logs/*.log
+
+# Large binary dependencies (download separately)
+ffmpeg/
+piper/
+out/
+
+# Assets - large files (optional: keep avatars/voices in separate LFS or download)
+assets/avatars/
+assets/voices/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Old prototype files
+aeter_talk_to.py
+talk_to_joi.py
+talk_to_joi_v1.py
+voice_engine.py
+eleven_config.py
+aeter_chat_log.txt
+say.ps1
+
+# Sensitive files - NEVER COMMIT
+*.env
+.env.local
+sk_*.txt
+
+# State files
+state/
+
+# Temp files
+*.tmp
+*.temp
+New Text Document.txt

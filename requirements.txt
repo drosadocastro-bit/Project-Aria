@@ -1,0 +1,14 @@
+requests>=2.31.0
+websockets>=12.0
+python-obd>=0.7.1
+# opencv-python>=4.8.0
+# torch>=2.1.0
+# torchvision>=0.16.0
+# ultralytics>=8.1.0  # For YOLO
+
+# Layer 5: RAG System (from nova_rag_public)
+# faiss-cpu>=1.7.4
+# sentence-transformers>=2.3.0
+# pypdf>=3.17.0
+# pillow>=10.1.0
+# openai>=1.6.0

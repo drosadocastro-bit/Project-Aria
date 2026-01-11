@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JOI - Holographic Avatar</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Holographic Avatar Display */
+        .avatar-container {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+
+        .avatar-glow {
+            width: 300px;
+            height: 300px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(0, 212, 255, 0.3) 0%, transparent 70%);
+            animation: pulse 3s ease-in-out infinite;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .avatar-inner {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #00d4ff 0%, #7b2cbf 100%);
+            box-shadow: 
+                0 0 60px rgba(0, 212, 255, 0.5),
+                inset 0 0 30px rgba(255, 255, 255, 0.2);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 4rem;
+            animation: float 4s ease-in-out infinite;
+        }
+
+        .avatar-inner.thinking {
+            animation: think-pulse 0.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 0.8; }
+            50% { transform: scale(1.1); opacity: 1; }
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        @keyframes think-pulse {
+            0%, 100% { box-shadow: 0 0 60px rgba(0, 212, 255, 0.5); }
+            50% { box-shadow: 0 0 100px rgba(123, 44, 191, 0.8); }
+        }
+
+        /* Status Display */
+        .status-bar {
+            text-align: center;
+            padding: 10px;
+            font-size: 0.9rem;
+            color: #00d4ff;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        /* Chat Display */
+        .chat-display {
+            height: 200px;
+            overflow-y: auto;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 15px;
+            margin-bottom: 15px;
+            border: 1px solid rgba(0, 212, 255, 0.2);
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            border-radius: 10px;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user {
+            background: rgba(0, 212, 255, 0.2);
+            margin-left: 50px;
+            text-align: right;
+        }
+
+        .message.assistant {
+            background: rgba(123, 44, 191, 0.2);
+            margin-right: 50px;
+        }
+
+        .message-label {
+            font-size: 0.75rem;
+            color: #888;
+            margin-bottom: 5px;
+        }
+
+        /* Input Area */
+        .input-area {
+            display: flex;
+            gap: 10px;
+        }
+
+        #userInput {
+            flex: 1;
+            padding: 15px 20px;
+            border: none;
+            border-radius: 25px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 1rem;
+            outline: none;
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            transition: all 0.3s ease;
+        }
+
+        #userInput:focus {
+            border-color: #00d4ff;
+            box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+        }
+
+        #userInput::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .send-btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 25px;
+            background: linear-gradient(135deg, #00d4ff 0%, #7b2cbf 100%);
+            color: #fff;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .send-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 30px rgba(0, 212, 255, 0.5);
+        }
+
+        .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Personality Toggle */
+        .personality-toggle {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .personality-btn {
+            padding: 8px 16px;
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            background: transparent;
+            color: #fff;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .personality-btn.active {
+            background: rgba(0, 212, 255, 0.3);
+            border-color: #00d4ff;
+        }
+
+        .personality-btn:hover {
+            background: rgba(0, 212, 255, 0.2);
+        }
+
+        /* Connection Status */
+        .connection-status {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.8rem;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #ff4444;
+        }
+
+        .status-dot.connected {
+            background: #44ff44;
+            animation: blink 2s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <div class="connection-status">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="connectionText">Disconnected</span>
+    </div>
+
+    <div class="personality-toggle">
+        <button class="personality-btn active" id="joiBtn" onclick="setPersonality('joi')">JOI</button>
+        <button class="personality-btn" id="ariaBtn" onclick="setPersonality('aria')">ARIA</button>
+    </div>
+
+    <div class="container">
+        <div class="avatar-container">
+            <div class="avatar-glow">
+                <div class="avatar-inner" id="avatarInner">
+                    ✨
+                </div>
+            </div>
+        </div>
+
+        <div class="status-bar" id="statusBar">
+            Initializing...
+        </div>
+
+        <div class="chat-display" id="chatDisplay">
+            <!-- Messages appear here -->
+        </div>
+
+        <div class="input-area">
+            <input 
+                type="text" 
+                id="userInput" 
+                placeholder="Speak to JOI..." 
+                onkeypress="handleKeyPress(event)"
+            >
+            <button class="send-btn" id="sendBtn" onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+    <script>
+        // WebSocket connection
+        let ws = null;
+        let currentPersonality = 'joi';
+        const WS_URL = 'ws://localhost:5001';
+
+        // DOM Elements
+        const statusDot = document.getElementById('statusDot');
+        const connectionText = document.getElementById('connectionText');
+        const statusBar = document.getElementById('statusBar');
+        const chatDisplay = document.getElementById('chatDisplay');
+        const userInput = document.getElementById('userInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const avatarInner = document.getElementById('avatarInner');
+
+        // Connect to WebSocket
+        function connect() {
+            ws = new WebSocket(WS_URL);
+
+            ws.onopen = () => {
+                statusDot.classList.add('connected');
+                connectionText.textContent = 'Connected';
+                statusBar.textContent = 'Ready';
+                sendBtn.disabled = false;
+            };
+
+            ws.onclose = () => {
+                statusDot.classList.remove('connected');
+                connectionText.textContent = 'Disconnected';
+                statusBar.textContent = 'Connection lost. Reconnecting...';
+                sendBtn.disabled = true;
+                
+                // Reconnect after 3 seconds
+                setTimeout(connect, 3000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                statusBar.textContent = 'Connection error';
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleMessage(data);
+            };
+        }
+
+        // Handle incoming messages
+        function handleMessage(data) {
+            switch (data.type) {
+                case 'greeting':
+                    addMessage(data.text, 'assistant');
+                    statusBar.textContent = `${data.personality.toUpperCase()} is ready`;
+                    break;
+
+                case 'status':
+                    if (data.status === 'thinking') {
+                        avatarInner.classList.add('thinking');
+                        statusBar.textContent = 'Thinking...';
+                    }
+                    break;
+
+                case 'response':
+                    avatarInner.classList.remove('thinking');
+                    addMessage(data.text, 'assistant');
+                    statusBar.textContent = `${data.personality.toUpperCase()} responded`;
+                    
+                    // Play audio if available
+                    if (data.audio) {
+                        playAudio(data.audio);
+                    }
+                    break;
+            }
+        }
+
+        // Send message
+        function sendMessage() {
+            const text = userInput.value.trim();
+            if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+            // Add user message to chat
+            addMessage(text, 'user');
+
+            // Send to server
+            ws.send(JSON.stringify({
+                type: 'chat',
+                text: text
+            }));
+
+            // Clear input
+            userInput.value = '';
+        }
+
+        // Handle Enter key
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        // Add message to chat display
+        function addMessage(text, role) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${role}`;
+            
+            const label = document.createElement('div');
+            label.className = 'message-label';
+            label.textContent = role === 'user' ? 'You' : currentPersonality.toUpperCase();
+            
+            const content = document.createElement('div');
+            content.textContent = text;
+            
+            msgDiv.appendChild(label);
+            msgDiv.appendChild(content);
+            chatDisplay.appendChild(msgDiv);
+            
+            // Scroll to bottom
+            chatDisplay.scrollTop = chatDisplay.scrollHeight;
+        }
+
+        // Set personality
+        function setPersonality(personality) {
+            currentPersonality = personality;
+            
+            // Update button states
+            document.getElementById('joiBtn').classList.toggle('active', personality === 'joi');
+            document.getElementById('ariaBtn').classList.toggle('active', personality === 'aria');
+            
+            // Update placeholder
+            userInput.placeholder = `Speak to ${personality.toUpperCase()}...`;
+            
+            // Send command to server
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'command',
+                    command: 'set_personality',
+                    value: personality
+                }));
+            }
+
+            statusBar.textContent = `Switched to ${personality.toUpperCase()}`;
+        }
+
+        // Play audio (simplified - actual implementation depends on backend serving audio)
+        function playAudio(audioPath) {
+            // In production, this would fetch audio from the backend
+            console.log('Playing audio:', audioPath);
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            statusBar.textContent = 'Connecting to Aria backend...';
+            connect();
+        });
+    </script>
+</body>
+</html>
