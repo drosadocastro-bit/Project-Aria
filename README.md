@@ -19,6 +19,7 @@ Project_Aria/
 ├── README.md
 ├── requirements.txt
 ├── config.py                      # Configuration
+├── config.example.py              # Example configuration template
 ├── aria.py                        # Main script (console + WebSocket)
 ├── joi_avatar.html                # Browser-based holographic avatar
 │
@@ -30,26 +31,68 @@ Project_Aria/
 │
 ├── queue/                         # Audio files (auto-created)
 ├── logs/                          # Logs (auto-created)
-└── assets/                        # Assets (auto-created)
+├── assets/                        # Assets (auto-created)
+│
+├── setup.bat                      # Windows setup script
+├── start.bat                      # Quick start script
+├── test_obd.bat                   # OBD test script
+├── TROUBLESHOOTING.md             # Troubleshooting guide
+└── EXAMPLES.md                    # Example queries
 ```
 
-## Quick Start
+## Quick Start Scripts
+
+### Windows Batch Files
+
+- **setup.bat** - Install dependencies and configure
+- **start.bat** - Quick start with connection checks
+- **test_obd.bat** - Test OBD-II connection only
+
+### First Time Setup
+
+```cmd
+# 1. Run setup
+setup.bat
+
+# 2. Start LM Studio and load google/gemma-3n-e4b
+
+# 3. Run Aria
+start.bat
+```
+
+## Manual Setup
 
 ### 1. Install Dependencies
 
 ```cmd
+# Use the setup script (Windows)
+setup.bat
+
+# Or manually
 pip install -r requirements.txt
 ```
 
 ### 2. Configure
 
-Edit `config.py`:
-- Set your LM Studio IP address
-- Configure OBD-II COM port (check Device Manager)
-- Update ElevenLabs API key if needed
+**Option 1: Use the example config**
+```cmd
+copy config.example.py config.py
+```
+Then edit `config.py` with your settings.
+
+**Option 2: Edit existing config.py**
+- Set your LM Studio IP address (default: http://127.0.0.1:1234)
+- Configure OBD-II COM port (check Device Manager) or use "AUTO" for auto-detection
+- Update ElevenLabs API key if needed (or set ELEVENLABS_KEY environment variable)
 
 ### 3. Run
 
+**Quick Start (Windows):**
+```cmd
+start.bat
+```
+
+**Manual Start:**
 ```cmd
 # Console mode (default)
 python aria.py
@@ -62,7 +105,17 @@ python aria.py --personality aria --language es
 python aria.py --mode avatar
 ```
 
-Then open `joi_avatar.html` in your browser.
+Then open `joi_avatar.html` in your browser for avatar mode.
+
+## Testing Components
+
+### Test OBD-II Connection
+```cmd
+test_obd.bat
+```
+
+### Test LM Studio Connection
+Open in browser: http://127.0.0.1:1234/v1/models
 
 ## Commands (Console Mode)
 
@@ -77,10 +130,10 @@ Then open `joi_avatar.html` in your browser.
 
 ## Requirements
 
-- **LM Studio**: Running locally with a loaded model
-- **ElevenLabs**: API key (already configured)
-- **OBD-II**: Bluetooth adapter paired to Windows (optional)
-- **ffmpeg**: Included in `ffmpeg/bin/`
+- **LM Studio**: Running locally with a loaded model (google/gemma-3n-e4b recommended)
+- **ElevenLabs**: API key (set via ELEVENLABS_KEY environment variable or in config.py)
+- **OBD-II**: Bluetooth adapter paired to Windows (optional, can be disabled in config.py)
+- **ffmpeg**: For audio playback (update FFPLAY_PATH in config.py)
 
 ## Personalities
 
@@ -97,3 +150,9 @@ Car-focused AI copilot. Knowledgeable, helpful, friendly.
 ## License
 
 MIT License
+
+## Additional Resources
+
+- **TROUBLESHOOTING.md** - Solutions for common issues
+- **EXAMPLES.md** - Sample queries and commands
+- **config.example.py** - Template configuration file

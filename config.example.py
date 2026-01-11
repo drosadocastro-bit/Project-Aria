@@ -1,5 +1,6 @@
 """
-Project Aria Configuration (Windows)
+Example configuration file for Project Aria
+Copy this to config.py and customize your settings
 """
 
 import os
@@ -21,12 +22,13 @@ NIC_ENABLED = os.path.exists(NIC_PATH) and os.path.exists(Path(NIC_PATH) / "back
 
 # ========== LLM CONFIG (LM Studio on Windows) ==========
 LM_STUDIO_API = "http://127.0.0.1:1234/v1/chat/completions"
-LM_STUDIO_MODEL = "google/gemma-3n-e4b"  # Your current model
+LM_STUDIO_MODEL = "google/gemma-3n-e4b"  # Or your preferred model
 
 # ========== VOICE CONFIG ==========
 USE_ELEVENLABS = True  # Set to False to disable voice
 
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_KEY", "sk_de07da0549c7911619d9cedd8e3b9b8668a402e3152e10c1")
+# Set environment variable: ELEVENLABS_KEY=your_api_key_here
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_KEY", "your_api_key_here")
 ELEVENLABS_VOICE_ID = "v8DWAeuEGQSfwxqdH9t2"  # JOI voice
 ELEVENLABS_HEADERS = {
     "xi-api-key": ELEVENLABS_API_KEY,
@@ -47,7 +49,7 @@ DEFAULT_LANGUAGE = "en"  # "en" or "es"
 DEFAULT_PERSONALITY = "joi"  # "joi" or "aria"
 
 # ========== AUDIO (Windows) ==========
-FFPLAY_PATH = "C:\\Project_Aria\\ffmpeg\\bin\\ffplay.exe"  # Your existing ffplay
+FFPLAY_PATH = "C:\\Project_Aria\\ffmpeg\\bin\\ffplay.exe"  # Update to your ffplay path
 AUDIO_QUEUE_LIMIT = 20
 
 # ========== LOGGING ==========
