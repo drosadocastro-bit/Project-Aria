@@ -77,3 +77,9 @@ DRIVING_ALLOW_EMOTION = False  # No affectionate/emotional language in DRIVING
 # Manual state override settings
 STATE_MANUAL_OVERRIDE_ENABLED = True  # Allow manual state override
 STATE_MANUAL_OVERRIDE_VALUE = None  # None, "PARKED", "GARAGE", or "DRIVING"
+
+# ========== SPOTIFY CONFIG (for Audio Intelligence / Auto EQ) ==========
+# Get credentials from: https://developer.spotify.com/dashboard
+SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "your_client_id_here")
+SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "your_client_secret_here")
+SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8888/callback"

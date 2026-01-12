@@ -1,5 +1,9 @@
 # Project Aria - Ignore patterns
 
+# Secrets - NEVER commit these!
+config.py
+state/spotify_token.json
+
 # Python
 __pycache__/
 *.py[cod]
