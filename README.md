@@ -11,6 +11,57 @@ AI companion for your VW GTI MK6 with holographic avatar.
 - 📚 **NIC Integration**: Access repair manuals (optional)
 - 🌐 **Holographic Avatar**: Browser-based visual interface
 - 🌍 **Bilingual**: English/Spanish
+- 🚦 **Driving Contract**: State-aware safety enforcement (DRIVING/PARKED/GARAGE modes)
+
+## Operational States (Driving Contract)
+
+Aria adapts her behavior based on vehicle state for **driver safety**:
+
+### 🚗 DRIVING Mode
+- **Trigger**: Vehicle moving (speed ≥ 5 mph) or temporarily stopped at traffic lights
+- **Behavior**: Ultra-concise responses (max 150 chars), structured format only
+- **Response Format**: `[Metric] → [Interpretation] → [Action]`
+- **Restrictions**: No questions, no emotional language, no humor, no verbose explanations
+- **Philosophy**: "Silence is safer than distraction"
+
+**Example**: 
+```
+User: "What's my coolant temp?"
+Aria: "Coolant: 92°C → Normal range → Continue monitoring."
+```
+
+### 🅿️ PARKED Mode
+- **Trigger**: Engine off, stopped >10 seconds, or parking brake engaged
+- **Behavior**: Full conversational mode with personality expression
+- **Response Style**: Detailed explanations, emotional warmth, questions allowed
+- **Use Cases**: Deep diagnostics, learning about your car, friendly chat
+
+**Example**:
+```
+User: "What's my coolant temp?"
+Aria: "Your coolant is sitting at 92°C, which is perfectly normal! The MK6's TSI runs a bit warm by design, but you're well within the 80-100°C operating range. Everything looks healthy!"
+```
+
+### 🔧 GARAGE Mode
+- **Trigger**: Manual override or sustained PARKED >30 minutes
+- **Behavior**: Maximum technical detail, repair manual integration, step-by-step procedures
+- **Response Style**: Verbose technical explanations with citations
+- **Use Cases**: Repairs, maintenance procedures, troubleshooting
+
+**Example**:
+```
+User: "How do I replace the PCV valve?"
+Aria: "PCV valve replacement on GTI MK6 (TSI EA888 Gen 1):
+Tools needed: T25 Torx, 10mm socket...
+[Full step-by-step procedure with torque specs and manual citations]"
+```
+
+**Documentation**: See `docs/ARIA_DRIVING_CONTRACT.md` for complete specification.
+
+**State Control**: 
+- Automatic state detection via OBD-II speed/RPM telemetry
+- Manual override: `/setstate PARKED|GARAGE|DRIVING` (console mode)
+- Check state: `/state` command
 
 ## Project Structure
 
@@ -27,7 +78,12 @@ Project_Aria/
 │   ├── __init__.py
 │   ├── personality.py             # JOI/Aria personalities
 │   ├── voice.py                   # ElevenLabs TTS
-│   └── obd_integration.py         # OBD-II connection
+│   ├── obd_integration.py         # OBD-II connection
+│   ├── state_manager.py           # Vehicle state detection (DRIVING/PARKED/GARAGE)
+│   └── response_validator.py     # DRIVING mode response enforcement
+│
+├── docs/
+│   └── ARIA_DRIVING_CONTRACT.md   # Complete operational state specification
 │
 ├── queue/                         # Audio files (auto-created)
 ├── logs/                          # Logs (auto-created)
@@ -126,6 +182,9 @@ Open in browser: http://127.0.0.1:1234/v1/models
 | `/en` | Switch to English |
 | `/es` | Switch to Spanish |
 | `/status` | Show OBD-II car status |
+| `/state` | Show current vehicle state (DRIVING/PARKED/GARAGE) |
+| `/setstate [STATE]` | Manually override state (PARKED, GARAGE, or DRIVING) |
+| `/clearstate` | Clear manual state override (return to automatic) |
 | `exit` | Quit |
 
 ## Requirements
