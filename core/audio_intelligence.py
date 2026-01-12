@@ -47,7 +47,8 @@ GENRE_EQ_MAP = {
     "alternative rock": "rock", "indie rock": "rock", "punk": "rock",
     "grunge": "rock", "garage rock": "rock", "arena rock": "rock",
     "glam rock": "rock", "soft rock": "pop", "folk rock": "acoustic",
-    "aor": "rock",
+    "aor": "rock", "album rock": "rock", "modern rock": "rock",
+    "post-grunge": "rock", "southern rock": "rock", "blues rock": "rock",
     
     # Metal variants
     "metal": "metal", "heavy metal": "metal", "thrash metal": "metal",
@@ -56,6 +57,7 @@ GENRE_EQ_MAP = {
     "progressive metal": "metal", "metalcore": "metal", "glam metal": "metal",
     "power metal": "metal", "gothic metal": "metal", "groove metal": "metal",
     "symphonic metal": "metal", "industrial metal": "metal", "speed metal": "metal",
+    "deathcore": "metal", "djent": "metal",
     
     # Electronic / EDM variants
     "electronic": "electronic", "edm": "electronic", "house": "electronic",
@@ -64,6 +66,14 @@ GENRE_EQ_MAP = {
     "synthwave": "electronic", "synthpop": "electronic", "chillwave": "electronic",
     "future bass": "electronic", "progressive house": "electronic",
     "electroclash": "electronic", "darkwave": "electronic",
+    "dreamwave": "electronic", "retrowave": "electronic", "outrun": "electronic",
+    "vaporwave": "electronic", "lo-fi": "electronic", "lofi": "electronic",
+    "ambient": "electronic", "downtempo": "electronic", "chillout": "electronic",
+    "deep house": "electronic", "tropical house": "electronic", "big room": "electronic",
+    "hardstyle": "electronic", "hardcore": "electronic", "gabber": "electronic",
+    "breakbeat": "electronic", "uk garage": "electronic", "bass music": "electronic",
+    "riddim": "electronic", "brostep": "electronic", "complextro": "electronic",
+    "future house": "electronic", "electropop": "pop",
     
     # Hip-hop variants
     "hip hop": "hip_hop", "rap": "hip_hop", "trap": "hip_hop",
@@ -71,30 +81,53 @@ GENRE_EQ_MAP = {
     "east coast hip hop": "hip_hop", "west coast hip hop": "hip_hop",
     "southern hip hop": "hip_hop", "latin hip hop": "hip_hop",
     "crunk": "hip_hop", "old school hip hop": "hip_hop",
+    "trap soul": "hip_hop", "conscious hip hop": "hip_hop",
+    "underground hip hop": "hip_hop", "dirty south": "hip_hop",
+    "boom bap": "hip_hop", "mumble rap": "hip_hop", "drill": "hip_hop",
+    "uk drill": "hip_hop", "chicago drill": "hip_hop",
+    "trap latino": "hip_hop", "urbano": "hip_hop",
     
     # Pop variants
     "pop": "pop", "pop punk": "pop", "indie pop": "pop",
     "art pop": "pop", "k-pop": "pop", "j-pop": "pop",
     "europop": "pop", "latin pop": "pop", "soft pop": "pop",
-    "power pop": "pop", "dance pop": "pop",
+    "power pop": "pop", "dance pop": "pop", "teen pop": "pop",
+    "bubblegum pop": "pop", "synth-pop": "pop", "chamber pop": "pop",
+    "dream pop": "pop", "sunshine pop": "pop", "baroque pop": "pop",
+    "bedroom pop": "pop", "hyperpop": "pop", "viral pop": "pop",
+    "barbadian pop": "pop", "canadian pop": "pop", "australian pop": "pop",
+    "british pop": "pop", "swedish pop": "pop", "german pop": "pop",
     
     # Latin variants
     "latin": "latin", "reggaeton": "latin", "salsa": "latin",
     "bachata": "latin", "merengue": "latin", "cumbia": "latin",
     "urbano latino": "latin", "latin rock": "latin", "ranchera": "latin",
     "rock en español": "latin", "latin alternative": "latin",
+    "dembow": "latin", "perreo": "latin", "latin trap": "latin",
+    "corrido": "latin", "norteño": "latin", "banda": "latin",
+    "mariachi": "latin", "bolero": "latin", "tango": "latin",
+    "tropical": "latin", "vallenato": "latin", "champeta": "latin",
     
     # R&B / Soul
     "r&b": "r_and_b", "soul": "r_and_b", "neo soul": "r_and_b",
     "motown": "r_and_b", "funk": "r_and_b", "quiet storm": "r_and_b",
+    "contemporary r&b": "r_and_b", "new jack swing": "r_and_b",
+    "urban contemporary": "r_and_b", "alternative r&b": "r_and_b",
+    "rhythm and blues": "r_and_b", "doo-wop": "r_and_b",
     
     # Acoustic / Folk
     "acoustic": "acoustic", "folk": "acoustic", "indie folk": "acoustic",
     "singer-songwriter": "acoustic", "country": "country",
+    "americana": "country", "bluegrass": "country", "outlaw country": "country",
+    "contemporary country": "country", "country rock": "country",
+    "alt-country": "country", "bro-country": "country",
     
     # Classical / Jazz
     "classical": "classical", "orchestra": "classical", "opera": "classical",
     "jazz": "jazz", "blues": "jazz", "jazz fusion": "jazz",
+    "smooth jazz": "jazz", "bebop": "jazz", "cool jazz": "jazz",
+    "contemporary jazz": "jazz", "acid jazz": "jazz",
+    "delta blues": "jazz", "chicago blues": "jazz", "electric blues": "jazz",
     
     # Punk variants  
     "punk rock": "rock", "hardcore punk": "rock", "pop punk": "pop",
