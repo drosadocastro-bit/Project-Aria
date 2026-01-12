@@ -53,3 +53,25 @@ AUDIO_QUEUE_LIMIT = 20
 # ========== LOGGING ==========
 LOG_LEVEL = "INFO"
 LOG_FILE = LOGS_FOLDER / "aria.log"
+
+# ========== STATE MANAGEMENT (Driving Contract) ==========
+# Speed threshold for PARKED→DRIVING transition
+STATE_SPEED_THRESHOLD = 5.0  # mph
+
+# Idle duration threshold for DRIVING→PARKED transition
+STATE_IDLE_THRESHOLD = 10.0  # seconds (stopped duration for PARKED)
+
+# Auto-transition timeout for PARKED→GARAGE
+STATE_GARAGE_TIMEOUT = 1800  # seconds (30 minutes)
+
+# Hysteresis duration to prevent rapid state switching
+STATE_HYSTERESIS_DURATION = 3.0  # seconds
+
+# Response constraints for DRIVING mode
+DRIVING_MAX_RESPONSE_LENGTH = 150  # characters
+DRIVING_ALLOW_QUESTIONS = False  # No questions in DRIVING mode
+DRIVING_ALLOW_EMOTION = False  # No affectionate/emotional language in DRIVING
+
+# Manual state override settings
+STATE_MANUAL_OVERRIDE_ENABLED = True  # Allow manual state override
+STATE_MANUAL_OVERRIDE_VALUE = None  # None, "PARKED", "GARAGE", or "DRIVING"

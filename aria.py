@@ -14,6 +14,8 @@ from config import *
 from core.personality import *
 from core.voice import generate_voice, play_audio, cleanup_old_files
 from core.obd_integration import obd_monitor
+from core.state_manager import create_state_manager, VehicleState
+from core.response_validator import create_response_validator
 
 # ========== NIC INTEGRATION (Optional) ==========
 
@@ -31,6 +33,11 @@ if NIC_ENABLED:
 current_language = DEFAULT_LANGUAGE
 current_personality = DEFAULT_PERSONALITY
 connected_clients = set()
+
+# Initialize state manager and response validator
+import config as config_module
+state_manager = create_state_manager(config_module)
+response_validator = create_response_validator(config_module)
 
 # ========== NIC QUERY ==========
 
@@ -86,14 +93,23 @@ def test_lm_studio_connection():
 
 
 def chat_with_lm_studio(message):
-    """Chat using LM Studio."""
+    """Chat using LM Studio with state-aware response validation."""
+    
+    # Get current vehicle state
+    car_status = obd_monitor.get_live_data()
+    current_state = state_manager.get_current_state(car_status)
     
     # Get NIC context if relevant
     nic_context = query_nic_for_context(message)
     
-    # Get car status
-    car_status = obd_monitor.get_live_data()
+    # Get car status formatting
     car_context = obd_monitor.format_status(car_status) if car_status else ""
+    
+    # Add state context to car status
+    if car_context:
+        car_context = f"[Vehicle State: {current_state.value}]\n{car_context}"
+    else:
+        car_context = f"[Vehicle State: {current_state.value}]"
     
     # Build enhanced message
     enhanced_message = message
@@ -102,8 +118,20 @@ def chat_with_lm_studio(message):
     if car_context:
         enhanced_message = f"{car_context}\n\n{enhanced_message}"
     
-    # Get system prompt
+    # Get system prompt - modify for DRIVING state
     system_prompt = get_system_prompt(current_personality, current_language)
+    
+    # Add DRIVING mode instructions if needed
+    if current_state == VehicleState.DRIVING:
+        driving_instructions = """
+CRITICAL: Vehicle is in DRIVING mode. Your responses MUST be:
+- Maximum 150 characters
+- Format: [Metric/State] → [Interpretation] → [Action]
+- No questions, no emotional language, no humor
+- Essential information only
+- If question is non-essential, respond with "Monitoring."
+"""
+        system_prompt = f"{system_prompt}\n\n{driving_instructions}"
     
     # Prepare payload (LM Studio format)
     payload = {
@@ -113,7 +141,7 @@ def chat_with_lm_studio(message):
         ],
         "temperature": 0.7,
         "top_p": 0.9,
-        "max_tokens": 512,
+        "max_tokens": 512 if current_state != VehicleState.DRIVING else 100,  # Limit tokens in DRIVING
         "stream": False,
         "model": LM_STUDIO_MODEL
     }
@@ -122,12 +150,35 @@ def chat_with_lm_studio(message):
         response = requests.post(LM_STUDIO_API, json=payload, timeout=30)
         response.raise_for_status()
         reply = response.json()['choices'][0]['message']['content']
-        return reply.strip()
+        reply = reply.strip()
+        
+        # Validate response based on state
+        is_valid, sanitized_reply, violation = response_validator.validate_response(
+            reply, current_state
+        )
+        
+        if not is_valid and current_state == VehicleState.DRIVING:
+            # Response violated DRIVING constraints - use sanitized version
+            print(f"⚠️ DRIVING mode violation: {violation}")
+            print(f"   Original: {reply[:100]}...")
+            print(f"   Sanitized: {sanitized_reply}")
+            return sanitized_reply
+        
+        return reply
+        
     except requests.exceptions.RequestException as e:
         print(f"❌ LM Studio error: {e}")
+        
+        # Return state-appropriate error message
+        if current_state == VehicleState.DRIVING:
+            return "Monitoring."
         return "I'm having trouble thinking right now. Is LM Studio running?"
+        
     except Exception as e:
         print(f"❌ Error: {e}")
+        
+        if current_state == VehicleState.DRIVING:
+            return "Monitoring."
         return "Something went wrong. Let me try again."
 
 # ========== WEBSOCKET SERVER (For Avatar) ==========
@@ -281,7 +332,7 @@ def console_mode():
     print(f"   Language: {current_language.upper()}")
     print(f"   NIC: {'Enabled' if NIC_ENABLED else 'Disabled'}")
     print(f"   OBD: {'Connected' if obd_monitor.connected else 'Not Connected'}")
-    print("\nCommands: /es, /en, /joi, /aria, /status, exit\n")
+    print("\nCommands: /es, /en, /joi, /aria, /status, /state, /setstate [STATE], /clearstate, exit\n")
     
     # Greeting
     greeting = get_greeting(current_personality)
@@ -320,6 +371,31 @@ def console_mode():
                     print(obd_monitor.format_status(status) + "\n")
                 else:
                     print("❌ OBD not connected\n")
+                continue
+            elif user_input.lower() == "/state":
+                status = obd_monitor.get_live_data()
+                current_state = state_manager.get_current_state(status)
+                state_info = state_manager.get_state_info(status)
+                print(f"\n🚦 Vehicle State: {current_state.value}")
+                print(f"   Time in state: {state_info['time_in_state']:.1f}s")
+                print(f"   Manual override: {state_info['manual_override']}")
+                print(f"   Telemetry: {'Available' if state_info['telemetry_available'] else 'Not available'}\n")
+                continue
+            elif user_input.lower().startswith("/setstate "):
+                # Manual state override: /setstate PARKED, /setstate GARAGE, /setstate DRIVING
+                parts = user_input.split()
+                if len(parts) == 2:
+                    try:
+                        state_manager.set_manual_override(parts[1])
+                        print(f"🔧 Manual override set to: {parts[1].upper()}\n")
+                    except ValueError as e:
+                        print(f"❌ {e}\n")
+                else:
+                    print("Usage: /setstate PARKED|GARAGE|DRIVING\n")
+                continue
+            elif user_input.lower() == "/clearstate":
+                state_manager.set_manual_override(None)
+                print("🔓 Manual override cleared\n")
                 continue
             elif user_input.lower() in ["exit", "quit"]:
                 goodbye = get_goodbye(current_personality)
