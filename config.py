@@ -47,7 +47,7 @@ DEFAULT_LANGUAGE = "en"  # "en" or "es"
 DEFAULT_PERSONALITY = "joi"  # "joi" or "aria"
 
 # ========== AUDIO (Windows) ==========
-FFPLAY_PATH = "C:\\Project_Aria\\ffmpeg\\bin\\ffplay.exe"  # Your existing ffplay
+FFPLAY_PATH = str(PROJECT_ROOT / "ffmpeg" / "bin" / "ffplay.exe")  # Relative to project
 AUDIO_QUEUE_LIMIT = 20
 
 # ========== LOGGING ==========
@@ -75,3 +75,8 @@ DRIVING_ALLOW_EMOTION = False  # No affectionate/emotional language in DRIVING
 # Manual state override settings
 STATE_MANUAL_OVERRIDE_ENABLED = True  # Allow manual state override
 STATE_MANUAL_OVERRIDE_VALUE = None  # None, "PARKED", "GARAGE", or "DRIVING"
+
+# ========== SPOTIFY CONFIG (for Audio Intelligence) ==========
+SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "")
+SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "")
+SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8888/callback"

@@ -1,6 +1,6 @@
 # Project Aria - GTI AI Copilot
 
-AI companion for your VW GTI MK6 with holographic avatar.
+AI companion for your VW GTI MK6 with holographic avatar and intelligent audio.
 
 ## Features
 
@@ -8,6 +8,7 @@ AI companion for your VW GTI MK6 with holographic avatar.
 - 🗣️ **Voice**: ElevenLabs premium TTS
 - 🧠 **LLM**: Local via LM Studio
 - 🚗 **OBD-II**: Real-time car data
+- 🎛️ **Auto EQ**: Spotify-aware DSP that adjusts EQ per song genre
 - 📚 **NIC Integration**: Access repair manuals (optional)
 - 🌐 **Holographic Avatar**: Browser-based visual interface
 - 🌍 **Bilingual**: English/Spanish
@@ -67,33 +68,33 @@ Tools needed: T25 Torx, 10mm socket...
 
 ```
 Project_Aria/
-├── README.md
-├── requirements.txt
+├── aria.py                        # Main AI copilot (console + WebSocket)
+├── auto_eq.py                     # 🎛️ Spotify Auto EQ (monitors playback)
+├── test_eq.py                     # Manual EQ preset tester
 ├── config.py                      # Configuration
-├── config.example.py              # Example configuration template
-├── aria.py                        # Main script (console + WebSocket)
-├── joi_avatar.html                # Browser-based holographic avatar
 │
 ├── core/
-│   ├── __init__.py
 │   ├── personality.py             # JOI/Aria personalities
 │   ├── voice.py                   # ElevenLabs TTS
 │   ├── obd_integration.py         # OBD-II connection
 │   ├── state_manager.py           # Vehicle state detection (DRIVING/PARKED/GARAGE)
-│   └── response_validator.py     # DRIVING mode response enforcement
+│   ├── response_validator.py     # DRIVING mode response enforcement
+│   └── audio_intelligence.py      # 🎛️ Genre→EQ mapping engine
 │
 ├── docs/
 │   └── ARIA_DRIVING_CONTRACT.md   # Complete operational state specification
 │
+├── music_dataset/                 # 🎵 1,449 tracks with genre labels
+│   ├── track_genre_clusters.csv
+│   └── cleaned_track_metadata_with_genres_encoded.csv
+│
 ├── queue/                         # Audio files (auto-created)
 ├── logs/                          # Logs (auto-created)
-├── assets/                        # Assets (auto-created)
+├── state/                         # Spotify tokens, history
 │
-├── setup.bat                      # Windows setup script
 ├── start.bat                      # Quick start script
-├── test_obd.bat                   # OBD test script
-├── TROUBLESHOOTING.md             # Troubleshooting guide
-└── EXAMPLES.md                    # Example queries
+├── setup.bat                      # Windows setup
+└── test_obd.bat                   # OBD test script
 ```
 
 ## Quick Start Scripts
@@ -114,6 +115,51 @@ setup.bat
 
 # 3. Run Aria
 start.bat
+```
+
+## 🎛️ Audio Intelligence (Auto EQ)
+
+Automatically adjusts EQ based on what's playing on Spotify. Detects genre from your music library and applies optimized presets in real-time.
+
+### Setup
+
+1. **Install Equalizer APO**: https://sourceforge.net/projects/equalizerapo/
+2. **Configure Spotify** in `config.py`:
+   ```python
+   SPOTIFY_CLIENT_ID = "your_client_id"
+   SPOTIFY_CLIENT_SECRET = "your_secret"
+   ```
+3. **Run Auto EQ**:
+   ```cmd
+   python auto_eq.py              # Parked mode (verbose)
+   python auto_eq.py --driving    # Driving mode (short phrases, 60s cooldown)
+   python auto_eq.py --no-voice   # Silent mode
+   ```
+
+### How It Works
+
+```
+Spotify → Track Detection → Genre Lookup → EQ Preset → Equalizer APO
+                              ↓
+                    "phonk → v_shape (100%)"
+                    "metal → metal (100%)"
+```
+
+### EQ Presets
+
+| Preset | Genres |
+|--------|--------|
+| `rock` | rock, classic rock, hard rock, grunge, aor |
+| `metal` | metal, thrash, death metal, nu metal |
+| `electronic` | EDM, house, techno, synthwave |
+| `hip_hop` | hip hop, rap, trap |
+| `latin` | reggaeton, salsa, bachata, urbano latino |
+| `v_shape` | phonk, drift phonk, default |
+
+### Manual Testing
+
+```cmd
+python test_eq.py    # Interactive preset selector
 ```
 
 ## Manual Setup
@@ -191,8 +237,10 @@ Open in browser: http://127.0.0.1:1234/v1/models
 
 - **LM Studio**: Running locally with a loaded model (google/gemma-3n-e4b recommended)
 - **ElevenLabs**: API key (set via ELEVENLABS_KEY environment variable or in config.py)
-- **OBD-II**: Bluetooth adapter paired to Windows (optional, can be disabled in config.py)
-- **ffmpeg**: For audio playback (update FFPLAY_PATH in config.py)
+- **OBD-II**: Bluetooth adapter paired to Windows (optional)
+- **ffmpeg**: For audio playback (included in `ffmpeg/bin/`)
+- **Equalizer APO**: For Auto EQ feature (Windows audio DSP)
+- **Spotify**: Developer app credentials for Auto EQ
 
 ## Personalities
 
