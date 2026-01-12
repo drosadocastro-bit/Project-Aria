@@ -20,7 +20,8 @@ from core.audio_intelligence import (
     GenreEQMapper, 
     EQ_PRESETS, 
     apply_eq_to_apo,
-    format_eq_for_dsp
+    format_eq_for_dsp,
+    GENRE_EQ_MAP
 )
 from core.voice import generate_voice, play_audio
 from config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, USE_ELEVENLABS
@@ -214,8 +215,26 @@ def authenticate_spotify(oauth):
     return False
 
 
+def get_artist_genres(oauth, artist_id):
+    """Get genres for an artist from Spotify API."""
+    token = oauth.get_token()
+    if not token:
+        return []
+    
+    response = requests.get(
+        f"https://api.spotify.com/v1/artists/{artist_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=5
+    )
+    
+    if response.status_code == 200:
+        data = response.json()
+        return data.get("genres", [])
+    return []
+
+
 def get_current_track(oauth):
-    """Get currently playing track from Spotify."""
+    """Get currently playing track from Spotify with artist genres."""
     token = oauth.get_token()
     if not token:
         return None
@@ -229,12 +248,18 @@ def get_current_track(oauth):
     if response.status_code == 200 and response.content:
         data = response.json()
         if data and data.get("item"):
+            artist_id = data["item"]["artists"][0]["id"]
+            # Fetch artist genres from Spotify
+            spotify_genres = get_artist_genres(oauth, artist_id)
+            
             return {
                 "track_id": data["item"]["id"],
                 "track_name": data["item"]["name"],
                 "artist": data["item"]["artists"][0]["name"],
+                "artist_id": artist_id,
                 "album": data["item"]["album"]["name"],
-                "is_playing": data.get("is_playing", False)
+                "is_playing": data.get("is_playing", False),
+                "spotify_genres": spotify_genres  # Artist genres from Spotify
             }
     elif response.status_code == 204:
         return None  # Nothing playing
@@ -245,7 +270,37 @@ def get_current_track(oauth):
     return None
 
 
+def genres_to_eq_preset(genres):
+    """Map a list of genres to an EQ preset with confidence."""
+    if not genres:
+        return "v_shape", None, 0.0
+    
+    # Priority 1: Exact match
+    for genre in genres:
+        genre_lower = genre.lower().strip()
+        if genre_lower in GENRE_EQ_MAP:
+            return GENRE_EQ_MAP[genre_lower], genre_lower, 1.0
+    
+    # Priority 2: Partial/substring match
+    for genre in genres:
+        genre_lower = genre.lower().strip()
+        for key, preset in GENRE_EQ_MAP.items():
+            if key in genre_lower or genre_lower in key:
+                return preset, f"{genre_lower}~{key}", 0.85
+    
+    # Priority 3: Word-level matching (e.g., "barbadian pop" contains "pop")
+    for genre in genres:
+        words = genre.lower().split()
+        for word in words:
+            if word in GENRE_EQ_MAP:
+                return GENRE_EQ_MAP[word], f"{genre}→{word}", 0.70
+    
+    # No match
+    return "v_shape", None, 0.0
+
+
 def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=False):
+    """Main loop - poll Spotify and auto-adjust EQ."""
     """Main loop - poll Spotify and auto-adjust EQ."""
     print("\n" + "=" * 60)
     print("  🎵 AUTO EQ MODE - Monitoring Spotify")
@@ -336,22 +391,29 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
                 if track_id != last_track_id:
                     last_track_id = track_id
                     
-                    # Try to find in our dataset
-                    result = mapper.get_eq_for_track(
-                        track_name=track["track_name"],
-                        artist=track["artist"]
-                    )
+                    # Get genres from Spotify API (artist genres)
+                    spotify_genres = track.get("spotify_genres", [])
                     
-                    # Extract results
-                    new_preset = result.get("preset", "v_shape")
-                    matched_genre = result.get("matched_genre")
-                    confidence = result.get("confidence", 0.0)
-                    genres = result.get("genres", [])
+                    # First try: Spotify artist genres
+                    new_preset, matched_genre, confidence = genres_to_eq_preset(spotify_genres)
+                    genres = spotify_genres
+                    
+                    # Fallback: Try our local dataset if Spotify didn't match
+                    if confidence == 0.0:
+                        result = mapper.get_eq_for_track(
+                            track_name=track["track_name"],
+                            artist=track["artist"]
+                        )
+                        if result.get("confidence", 0.0) > 0:
+                            new_preset = result.get("preset", "v_shape")
+                            matched_genre = result.get("matched_genre")
+                            confidence = result.get("confidence", 0.0)
+                            genres = result.get("genres", [])
                     
                     # Logging - truthful about intent
                     print(f"\n🎵 Now Playing: {track['track_name']} - {track['artist']}")
                     if genres:
-                        print(f"   Genres: {', '.join(genres[:4])}")
+                        print(f"   🏷️ Genres: {', '.join(genres[:5])}")
                     
                     # Apply EQ if preset changed
                     if new_preset != current_preset:
@@ -363,7 +425,7 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
                             print(f"   📋 Reason: {matched_genre} → {new_preset} (confidence: {confidence:.0%})")
                         else:
                             print(f"   🎛️ EQ applied: {new_preset}")
-                            print(f"   📋 Reason: no match → default (confidence: {confidence:.0%})")
+                            print(f"   📋 Reason: no genre match → default (confidence: {confidence:.0%})")
                         
                         # Voice announcement (gated)
                         speak(new_preset, confidence)
