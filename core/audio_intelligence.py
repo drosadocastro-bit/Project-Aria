@@ -477,11 +477,11 @@ class GenreEQMapper:
         preset_counts = {}
         for _, row in cluster_tracks.iterrows():
             genres = [g.strip().lower() for g in str(row.get("genres", "")).split(",") if g.strip()]
-            preset_name, _ = self.genres_to_eq(genres)
+            preset_name, _, _, _ = self.genres_to_eq(genres)
             preset_counts[preset_name] = preset_counts.get(preset_name, 0) + 1
         
         if preset_counts:
-            best_preset = max(preset_counts, key=preset_counts.get)
+            best_preset = max(preset_counts, key=lambda p: preset_counts[p])
             return best_preset, EQ_PRESETS[best_preset]
         
         return "v_shape", EQ_PRESETS["v_shape"]
