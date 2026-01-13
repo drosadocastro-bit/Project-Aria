@@ -135,7 +135,7 @@ class GenreClassifier:
         
         # Encode labels
         self.label_encoder = LabelEncoder()
-        y_encoded = self.label_encoder.fit_transform(y)
+        y_encoded = self.label_encoder.fit_transform(np.asarray(y))
         
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(
@@ -206,7 +206,7 @@ class GenreClassifier:
         Returns:
             Predicted genre(s) and optionally probabilities
         """
-        if not self.is_trained:
+        if not self.is_trained or self.scaler is None or self.model is None or self.label_encoder is None:
             print("❌ Model not trained! Call train() first or load a pre-trained model.")
             return None
         
@@ -238,10 +238,14 @@ class GenreClassifier:
         Returns:
             Dict with 'genre', 'confidence', and 'all_probabilities'
         """
-        if not self.is_trained:
+        if not self.is_trained or self.label_encoder is None:
             return {'genre': 'unknown', 'confidence': 0.0, 'all_probabilities': {}}
         
-        genres, probs = self.predict(features, return_probabilities=True)
+        prediction_result = self.predict(features, return_probabilities=True)
+        if prediction_result is None:
+            return {'genre': 'unknown', 'confidence': 0.0, 'all_probabilities': {}}
+        
+        genres, probs = prediction_result
         
         # Get top prediction
         top_genre = genres[0]
@@ -362,7 +366,7 @@ class LiveAudioAnalyzer:
         
         try:
             y, sr = librosa.load(filepath, duration=duration, sr=22050)
-            return self.extract_features_from_audio(y, sr)
+            return self.extract_features_from_audio(y, int(sr))
         except Exception as e:
             print(f"❌ Error loading audio file: {e}")
             return None
