@@ -14,6 +14,7 @@ import requests
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+from collections import Counter
 import threading
 import tempfile
 import os
@@ -44,6 +45,12 @@ ML_PREDICTIONS_FILE = Path(__file__).parent / "state" / "ml_predictions.csv"
 # ML Classification cache (avoid re-classifying same track)
 _ml_cache = {}
 
+# Model versioning for future confidence decay
+MODEL_VERSION = "GTZAN_RF_v1.0"
+
+# Cache limits
+ML_CACHE_MAX_ENTRIES = 10000
+
 
 def load_ml_predictions_cache():
     """Load persistent ML predictions from CSV into memory cache."""
@@ -64,7 +71,9 @@ def load_ml_predictions_cache():
                         "genre": row.get("genre_predicted", ""),
                         "confidence": float(row.get("confidence", 0.0)),
                         "top_3": row.get("top_3", ""),
-                        "source": row.get("source", "csv")
+                        "source": row.get("source", "csv"),
+                        "timestamp": row.get("timestamp", ""),
+                        "model_version": row.get("model_version", "unknown")
                     }
                     loaded += 1
     except Exception as e:
@@ -86,7 +95,7 @@ def save_ml_prediction(track_id, track_name, artist, genre, preset, confidence, 
             if not file_exists:
                 writer.writerow([
                     "track_id", "track_name", "artist", "genre_predicted", 
-                    "preset", "confidence", "top_3", "source", "timestamp"
+                    "preset", "confidence", "top_3", "source", "timestamp", "model_version"
                 ])
             
             writer.writerow([
@@ -98,10 +107,191 @@ def save_ml_prediction(track_id, track_name, artist, genre, preset, confidence, 
                 f"{confidence:.2f}",
                 str(top_3) if top_3 else "",
                 source,
-                datetime.now().isoformat()
+                datetime.now().isoformat(),
+                MODEL_VERSION
             ])
     except Exception as e:
         print(f"⚠️ Failed to save ML prediction: {e}")
+
+
+def prune_ml_cache(max_entries=None):
+    """
+    Keep only the last N predictions in CSV (FIFO).
+    Prevents unbounded growth on long listening sessions.
+    Also migrates old entries to include model_version column.
+    
+    Returns: (kept, pruned) tuple
+    """
+    if max_entries is None:
+        max_entries = ML_CACHE_MAX_ENTRIES
+    
+    if not ML_PREDICTIONS_FILE.exists():
+        return 0, 0
+    
+    # Standard fieldnames (including new model_version)
+    standard_fieldnames = [
+        "track_id", "track_name", "artist", "genre_predicted", 
+        "preset", "confidence", "top_3", "source", "timestamp", "model_version"
+    ]
+    
+    try:
+        # Read all entries
+        with open(ML_PREDICTIONS_FILE, 'r', encoding='utf-8', newline='') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        
+        total = len(rows)
+        
+        # Migrate: add model_version to old entries that don't have it
+        for row in rows:
+            if "model_version" not in row or not row.get("model_version"):
+                row["model_version"] = "unknown"
+        
+        if total <= max_entries:
+            # Still rewrite to ensure schema is up to date
+            with open(ML_PREDICTIONS_FILE, 'w', encoding='utf-8', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=standard_fieldnames, extrasaction='ignore')
+                writer.writeheader()
+                writer.writerows(rows)
+            return total, 0
+        
+        # Keep last N entries (most recent)
+        kept_rows = rows[-max_entries:]
+        pruned = total - max_entries
+        
+        # Rewrite file with only kept entries (and updated schema)
+        with open(ML_PREDICTIONS_FILE, 'w', encoding='utf-8', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=standard_fieldnames, extrasaction='ignore')
+            writer.writeheader()
+            writer.writerows(kept_rows)
+        
+        print(f"🗑️ Pruned ML cache: {pruned} old entries removed, {len(kept_rows)} kept")
+        return len(kept_rows), pruned
+        
+    except Exception as e:
+        print(f"⚠️ Failed to prune ML cache: {e}")
+        return 0, 0
+
+
+def get_ml_stats():
+    """
+    Get ML cache analytics for debugging/monitoring.
+    
+    Returns dict with:
+        - count: Total cached entries
+        - avg_confidence: Mean confidence across all predictions
+        - top_presets: Most common EQ presets (top 5)
+        - top_genres: Most common predicted genres (top 5)
+        - oldest: Oldest prediction timestamp
+        - newest: Most recent prediction timestamp
+        - model_versions: Count by model version
+    """
+    global _ml_cache
+    
+    stats = {
+        "count": 0,
+        "avg_confidence": 0.0,
+        "top_presets": [],
+        "top_genres": [],
+        "oldest": None,
+        "newest": None,
+        "model_versions": {}
+    }
+    
+    if not _ml_cache:
+        # Try loading from file if cache is empty
+        if ML_PREDICTIONS_FILE.exists():
+            try:
+                with open(ML_PREDICTIONS_FILE, 'r', encoding='utf-8', newline='') as f:
+                    reader = csv.DictReader(f)
+                    rows = list(reader)
+                    
+                if rows:
+                    stats["count"] = len(rows)
+                    
+                    # Confidence
+                    confidences = [float(r.get("confidence", 0)) for r in rows if r.get("confidence")]
+                    if confidences:
+                        stats["avg_confidence"] = sum(confidences) / len(confidences)
+                    
+                    # Top presets
+                    presets = [r.get("preset", "") for r in rows if r.get("preset")]
+                    stats["top_presets"] = Counter(presets).most_common(5)
+                    
+                    # Top genres
+                    genres = [r.get("genre_predicted", "") for r in rows if r.get("genre_predicted")]
+                    stats["top_genres"] = Counter(genres).most_common(5)
+                    
+                    # Timestamps
+                    timestamps = [r.get("timestamp", "") for r in rows if r.get("timestamp")]
+                    if timestamps:
+                        stats["oldest"] = min(timestamps)
+                        stats["newest"] = max(timestamps)
+                    
+                    # Model versions
+                    versions = [r.get("model_version", "unknown") for r in rows]
+                    stats["model_versions"] = dict(Counter(versions))
+                    
+            except Exception as e:
+                print(f"⚠️ Failed to read stats from file: {e}")
+    else:
+        # Use memory cache
+        stats["count"] = len(_ml_cache)
+        
+        confidences = [v.get("confidence", 0) for v in _ml_cache.values()]
+        if confidences:
+            stats["avg_confidence"] = sum(confidences) / len(confidences)
+        
+        presets = [v.get("preset", "") for v in _ml_cache.values() if v.get("preset")]
+        stats["top_presets"] = Counter(presets).most_common(5)
+        
+        genres = [v.get("genre", "") for v in _ml_cache.values() if v.get("genre")]
+        stats["top_genres"] = Counter(genres).most_common(5)
+        
+        timestamps = [v.get("timestamp", "") for v in _ml_cache.values() if v.get("timestamp")]
+        if timestamps:
+            stats["oldest"] = min(timestamps)
+            stats["newest"] = max(timestamps)
+        
+        versions = [v.get("model_version", "unknown") for v in _ml_cache.values()]
+        stats["model_versions"] = dict(Counter(versions))
+    
+    return stats
+
+
+def print_ml_stats():
+    """Pretty-print ML cache statistics."""
+    stats = get_ml_stats()
+    
+    print("\n" + "=" * 50)
+    print("  📊 ML Classification Cache Stats")
+    print("=" * 50)
+    print(f"  Cached entries:    {stats['count']}")
+    print(f"  Avg confidence:    {stats['avg_confidence']:.1%}")
+    print(f"  Model version:     {MODEL_VERSION}")
+    
+    if stats['top_presets']:
+        print(f"\n  🎛️ Top EQ Presets:")
+        for preset, count in stats['top_presets']:
+            print(f"     {preset:15} {count:4} tracks")
+    
+    if stats['top_genres']:
+        print(f"\n  🎵 Top Genres:")
+        for genre, count in stats['top_genres']:
+            print(f"     {genre:15} {count:4} tracks")
+    
+    if stats['oldest']:
+        print(f"\n  📅 Date range:")
+        print(f"     Oldest: {stats['oldest'][:10]}")
+        print(f"     Newest: {stats['newest'][:10]}")
+    
+    if stats['model_versions']:
+        print(f"\n  🤖 Model versions:")
+        for ver, count in stats['model_versions'].items():
+            print(f"     {ver}: {count} predictions")
+    
+    print("=" * 50 + "\n")
+    return stats
 
 
 class SpotifyOAuth:
@@ -655,6 +845,18 @@ def main():
     print("  Aria Auto EQ - Spotify Integration + ML Classification")
     print("=" * 60)
     
+    # Handle --stats flag (show analytics and exit)
+    if "--stats" in sys.argv:
+        load_ml_predictions_cache()
+        print_ml_stats()
+        return
+    
+    # Handle --prune flag (prune cache and exit)
+    if "--prune" in sys.argv:
+        kept, pruned = prune_ml_cache()
+        print(f"Cache pruned: kept {kept}, removed {pruned}")
+        return
+    
     # Check credentials
     if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
         print("\n❌ Spotify credentials not configured!")
@@ -668,10 +870,15 @@ def main():
     # Load persistent ML predictions (offline-first cache)
     cached_count = load_ml_predictions_cache()
     
+    # Auto-prune if cache exceeds limit (prevents unbounded growth)
+    if cached_count > ML_CACHE_MAX_ENTRIES:
+        prune_ml_cache()
+    
     # Check ML classifier
     classifier = get_ml_classifier()
     if classifier and classifier.is_trained:
         print(f"🤖 ML classifier ready (accuracy: {classifier.accuracy:.0%})")
+        print(f"   Model version: {MODEL_VERSION}")
     else:
         print("⚠️ ML classifier not trained - run: python -m core.genre_classifier")
     
@@ -696,6 +903,8 @@ def main():
     print("   --no-voice    Disable voice announcements")
     print("   --no-ml       Disable ML fallback classification")
     print("   --driving     Enable driving-safe mode (short phrases, 60s cooldown)")
+    print("   --stats       Show ML cache statistics")
+    print("   --prune       Manually prune cache to last 10K entries")
     
     voice_on = "--no-voice" not in sys.argv
     ml_on = "--no-ml" not in sys.argv
