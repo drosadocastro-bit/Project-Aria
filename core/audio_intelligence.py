@@ -5,6 +5,7 @@ Enhanced with ML-based genre classification from GTZAN dataset
 """
 
 import os
+import json
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -14,8 +15,41 @@ DATASET_PATH = Path(__file__).parent.parent / "music_dataset"
 TRACKS_FILE = DATASET_PATH / "track_genre_clusters.csv"
 GENRE_ENCODED_FILE = DATASET_PATH / "cleaned_track_metadata_with_genres_encoded.csv"
 
+# JSON config for editable genre mappings
+CONFIG_PATH = Path(__file__).parent.parent / "config"
+GENRE_MAPPING_FILE = CONFIG_PATH / "genre_eq_mapping.json"
+
 # ML Genre Classifier (lazy import to avoid circular deps)
 _ml_classifier = None
+
+# Cached JSON mappings (loaded once)
+_genre_eq_map_cache = None
+_gtzan_to_eq_cache = None
+
+
+def load_genre_mappings():
+    """Load genre→EQ mappings from JSON config file."""
+    global _genre_eq_map_cache, _gtzan_to_eq_cache
+    
+    if _genre_eq_map_cache is not None:
+        return _genre_eq_map_cache, _gtzan_to_eq_cache
+    
+    if GENRE_MAPPING_FILE.exists():
+        try:
+            with open(GENRE_MAPPING_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                _genre_eq_map_cache = data.get("genre_eq_map", {})
+                _gtzan_to_eq_cache = data.get("gtzan_to_eq", {})
+                # Remove comment keys
+                _gtzan_to_eq_cache.pop("_comment", None)
+                print(f"✅ Loaded {len(_genre_eq_map_cache)} genre mappings from JSON")
+                return _genre_eq_map_cache, _gtzan_to_eq_cache
+        except Exception as e:
+            print(f"⚠️ Failed to load genre mappings: {e}")
+    
+    # Fallback to None (will use hardcoded)
+    return None, None
+
 
 def get_ml_classifier():
     """Get or create ML genre classifier instance."""
@@ -180,6 +214,18 @@ GTZAN_TO_EQ = {
 }
 
 
+def get_genre_eq_map():
+    """Get genre→EQ mapping, preferring JSON config over hardcoded."""
+    json_map, _ = load_genre_mappings()
+    return json_map if json_map else GENRE_EQ_MAP
+
+
+def get_gtzan_to_eq():
+    """Get GTZAN→EQ mapping, preferring JSON config over hardcoded."""
+    _, json_gtzan = load_genre_mappings()
+    return json_gtzan if json_gtzan else GTZAN_TO_EQ
+
+
 class GenreEQMapper:
     """Maps tracks to EQ settings based on genre."""
     
@@ -235,18 +281,21 @@ class GenreEQMapper:
         if not genres:
             return "v_shape", EQ_PRESETS["v_shape"], None, 0.0
         
+        # Load mappings (prefers JSON config)
+        genre_map = get_genre_eq_map()
+        
         # Priority: more specific genres first (exact match)
         for genre in genres:
             genre_clean = genre.strip().lower()
-            if genre_clean in GENRE_EQ_MAP:
-                preset_name = GENRE_EQ_MAP[genre_clean]
+            if genre_clean in genre_map:
+                preset_name = genre_map[genre_clean]
                 confidence = 1.0  # Exact match
                 return preset_name, EQ_PRESETS[preset_name], genre_clean, confidence
         
         # Check for partial matches (lower confidence)
         for genre in genres:
             genre_clean = genre.strip().lower()
-            for key, preset_name in GENRE_EQ_MAP.items():
+            for key, preset_name in genre_map.items():
                 if key in genre_clean or genre_clean in key:
                     confidence = 0.75  # Partial match
                     return preset_name, EQ_PRESETS[preset_name], f"{genre_clean}~{key}", confidence

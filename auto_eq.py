@@ -8,6 +8,7 @@ import sys
 import time
 import webbrowser
 import json
+import csv
 import base64
 import requests
 from pathlib import Path
@@ -16,6 +17,7 @@ from urllib.parse import urlparse, parse_qs
 import threading
 import tempfile
 import os
+from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -26,7 +28,9 @@ from core.audio_intelligence import (
     format_eq_for_dsp,
     GENRE_EQ_MAP,
     GTZAN_TO_EQ,
-    get_ml_classifier
+    get_ml_classifier,
+    get_genre_eq_map,
+    get_gtzan_to_eq
 )
 from core.voice import generate_voice, play_audio
 from config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, USE_ELEVENLABS
@@ -34,8 +38,70 @@ from config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_UR
 # Token storage
 TOKEN_FILE = Path(__file__).parent / "state" / "spotify_token.json"
 
+# ML Predictions persistence (offline cache / audit trail)
+ML_PREDICTIONS_FILE = Path(__file__).parent / "state" / "ml_predictions.csv"
+
 # ML Classification cache (avoid re-classifying same track)
 _ml_cache = {}
+
+
+def load_ml_predictions_cache():
+    """Load persistent ML predictions from CSV into memory cache."""
+    global _ml_cache
+    
+    if not ML_PREDICTIONS_FILE.exists():
+        return 0
+    
+    loaded = 0
+    try:
+        with open(ML_PREDICTIONS_FILE, 'r', encoding='utf-8', newline='') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                track_id = row.get("track_id")
+                if track_id and track_id not in _ml_cache:
+                    _ml_cache[track_id] = {
+                        "preset": row.get("preset", "v_shape"),
+                        "genre": row.get("genre_predicted", ""),
+                        "confidence": float(row.get("confidence", 0.0)),
+                        "top_3": row.get("top_3", ""),
+                        "source": row.get("source", "csv")
+                    }
+                    loaded += 1
+    except Exception as e:
+        print(f"⚠️ Failed to load ML predictions cache: {e}")
+    
+    if loaded > 0:
+        print(f"✅ Loaded {loaded} cached ML predictions (offline-first)")
+    return loaded
+
+
+def save_ml_prediction(track_id, track_name, artist, genre, preset, confidence, top_3, source="ml"):
+    """Persist a single ML prediction to CSV for audit trail & offline use."""
+    try:
+        file_exists = ML_PREDICTIONS_FILE.exists()
+        ML_PREDICTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(ML_PREDICTIONS_FILE, 'a', encoding='utf-8', newline='') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow([
+                    "track_id", "track_name", "artist", "genre_predicted", 
+                    "preset", "confidence", "top_3", "source", "timestamp"
+                ])
+            
+            writer.writerow([
+                track_id,
+                track_name or "",
+                artist or "",
+                genre,
+                preset,
+                f"{confidence:.2f}",
+                str(top_3) if top_3 else "",
+                source,
+                datetime.now().isoformat()
+            ])
+    except Exception as e:
+        print(f"⚠️ Failed to save ML prediction: {e}")
 
 
 class SpotifyOAuth:
@@ -284,16 +350,19 @@ def genres_to_eq_preset(genres):
     if not genres:
         return "v_shape", None, 0.0
     
+    # Load mappings (prefers JSON config)
+    genre_map = get_genre_eq_map()
+    
     # Priority 1: Exact match
     for genre in genres:
         genre_lower = genre.lower().strip()
-        if genre_lower in GENRE_EQ_MAP:
-            return GENRE_EQ_MAP[genre_lower], genre_lower, 1.0
+        if genre_lower in genre_map:
+            return genre_map[genre_lower], genre_lower, 1.0
     
     # Priority 2: Partial/substring match
     for genre in genres:
         genre_lower = genre.lower().strip()
-        for key, preset in GENRE_EQ_MAP.items():
+        for key, preset in genre_map.items():
             if key in genre_lower or genre_lower in key:
                 return preset, f"{genre_lower}~{key}", 0.85
     
@@ -301,26 +370,28 @@ def genres_to_eq_preset(genres):
     for genre in genres:
         words = genre.lower().split()
         for word in words:
-            if word in GENRE_EQ_MAP:
-                return GENRE_EQ_MAP[word], f"{genre}→{word}", 0.70
+            if word in genre_map:
+                return genre_map[word], f"{genre}→{word}", 0.70
     
     # No match
     return "v_shape", None, 0.0
 
 
-def classify_track_with_ml(track_id, preview_url):
+def classify_track_with_ml(track_id, preview_url, track_name=None, artist=None):
     """
     Use ML classifier to detect genre from Spotify's 30-second preview.
-    Results are cached to avoid re-downloading/classifying.
+    Results are cached in memory AND persisted to CSV for offline use.
     
     Returns:
         (preset_name, genre, confidence) or (None, None, 0.0) on failure
     """
     global _ml_cache
     
-    # Check cache first
+    # Check memory cache first (includes entries loaded from CSV)
     if track_id in _ml_cache:
         cached = _ml_cache[track_id]
+        source = cached.get("source", "cache")
+        print(f"   💾 Cache hit ({source}): {cached['genre']} → {cached['preset']}")
         return cached["preset"], cached["genre"], cached["confidence"]
     
     if not preview_url:
@@ -329,6 +400,9 @@ def classify_track_with_ml(track_id, preview_url):
     classifier = get_ml_classifier()
     if classifier is None or not classifier.is_trained:
         return None, None, 0.0
+    
+    # Use dynamic GTZAN mapping (prefers JSON config)
+    gtzan_map = get_gtzan_to_eq()
     
     try:
         # Download preview audio
@@ -352,15 +426,29 @@ def classify_track_with_ml(track_id, preview_url):
             if result and result.get("genre"):
                 ml_genre = result["genre"]
                 confidence = result["confidence"]
-                preset = GTZAN_TO_EQ.get(ml_genre, "v_shape")
+                preset = gtzan_map.get(ml_genre, "v_shape")
+                top_3 = result.get("top_3", [])
                 
-                # Cache result
+                # Cache result in memory
                 _ml_cache[track_id] = {
                     "preset": preset,
                     "genre": ml_genre,
                     "confidence": confidence,
-                    "top_3": result.get("top_3", [])
+                    "top_3": top_3,
+                    "source": "ml"
                 }
+                
+                # Persist to CSV for offline use & audit trail
+                save_ml_prediction(
+                    track_id=track_id,
+                    track_name=track_name,
+                    artist=artist,
+                    genre=ml_genre,
+                    preset=preset,
+                    confidence=confidence,
+                    top_3=top_3,
+                    source="ml"
+                )
                 
                 print(f"   🤖 ML: Detected {ml_genre} ({confidence:.0%}) → {preset}")
                 return preset, ml_genre, confidence
@@ -502,7 +590,9 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
                     if confidence == 0.0 and ml_enabled:
                         preview_url = track.get("preview_url")
                         ml_preset, ml_genre, ml_confidence = classify_track_with_ml(
-                            track_id, preview_url
+                            track_id, preview_url,
+                            track_name=track["track_name"],
+                            artist=track["artist"]
                         )
                         if ml_preset and ml_confidence > 0.5:
                             new_preset = ml_preset
@@ -574,6 +664,9 @@ def main():
     # Initialize
     oauth = SpotifyOAuth()
     mapper = GenreEQMapper()
+    
+    # Load persistent ML predictions (offline-first cache)
+    cached_count = load_ml_predictions_cache()
     
     # Check ML classifier
     classifier = get_ml_classifier()
