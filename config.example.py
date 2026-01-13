@@ -78,6 +78,31 @@ DRIVING_ALLOW_EMOTION = False  # No affectionate/emotional language in DRIVING
 STATE_MANUAL_OVERRIDE_ENABLED = True  # Allow manual state override
 STATE_MANUAL_OVERRIDE_VALUE = None  # None, "PARKED", "GARAGE", or "DRIVING"
 
+# ========== OFFLINE TTS/STT CONFIG (Optional) ==========
+# Enable offline TTS/STT (see docs/deployment/OFFLINE_TTS_STT.md)
+
+# Offline TTS settings
+# Set to True to enable offline TTS (Coqui or pyttsx3)
+# os.environ['OFFLINE_TTS_ENABLED'] = 'true'
+# os.environ['OFFLINE_TTS_BACKEND'] = 'auto'  # auto|coqui|pyttsx3
+
+# Coqui TTS model (auto-downloads on first use)
+# os.environ['COQUI_MODEL_NAME'] = 'tts_models/en/ljspeech/tacotron2-DDC'
+
+# pyttsx3 settings (Windows fallback)
+# os.environ['PYTTSX3_RATE'] = '150'  # Words per minute
+# os.environ['PYTTSX3_VOLUME'] = '0.9'
+
+# Offline STT settings
+# Set to True to enable offline STT (whisper.cpp)
+# os.environ['OFFLINE_STT_ENABLED'] = 'true'
+
+# Whisper.cpp paths (see scripts/download_models.sh for setup)
+# NOVA_OFFLINE_MODEL_DIR = Path.home() / '.aria/models'
+# os.environ['NOVA_OFFLINE_MODEL_DIR'] = str(NOVA_OFFLINE_MODEL_DIR)
+# os.environ['WHISPER_MODEL_PATH'] = str(NOVA_OFFLINE_MODEL_DIR / 'ggml-small.bin')
+# os.environ['WHISPER_CPP_PATH'] = str(Path.home() / 'whisper.cpp/main')  # Or main.exe on Windows
+
 # ========== SPOTIFY CONFIG (for Audio Intelligence / Auto EQ) ==========
 # Get credentials from: https://developer.spotify.com/dashboard
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "your_client_id_here")

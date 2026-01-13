@@ -1,0 +1,36 @@
+# Optional offline TTS/STT dependencies for Project Aria
+# Install with: pip install -r requirements-offline.txt
+
+# ========== Offline TTS ==========
+
+# Coqui TTS (preferred) - Neural TTS with multiple voices/models
+# Note: ~500MB+ with models, GPU-accelerated if available
+TTS>=0.22.0
+
+# pyttsx3 (Windows fallback) - Lightweight offline TTS using system voices
+# Works with SAPI5 on Windows, espeak on Linux
+pyttsx3>=2.90
+
+# ========== Offline STT ==========
+
+# NOTE: whisper.cpp is used as external binary, not a Python package
+# Build instructions: https://github.com/ggerganov/whisper.cpp
+# Pre-built binaries available for Windows/Linux/macOS
+
+# Optional: Python bindings for whisper.cpp (if needed later)
+# pywhispercpp>=0.1.0
+
+# ========== Audio Processing ==========
+
+# For audio format conversion (WAV, MP3, etc.)
+pydub>=0.25.1
+
+# Optional: For advanced audio preprocessing
+# soundfile>=0.12.1
+# scipy>=1.11.0
+
+# ========== Testing ==========
+
+# For mocking in tests (already in main requirements)
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0

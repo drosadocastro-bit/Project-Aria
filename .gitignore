@@ -18,6 +18,13 @@ env/
 queue/
 logs/*.log
 
+# Offline TTS/STT generated files and models
+static/tts/*.wav
+*.bin
+*.ggml
+models/*.bin
+.aria/
+
 # Large binary dependencies (download separately)
 ffmpeg/
 piper/
