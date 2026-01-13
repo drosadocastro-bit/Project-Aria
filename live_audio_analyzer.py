@@ -74,13 +74,20 @@ class LiveAudioAnalyzer:
         
         import soundcard as sc
         
-        # Get default speaker's loopback
-        speakers = sc.all_speakers()
-        if speakers:
-            default = sc.default_speaker()
-            print(f"🔊 Using loopback: {default.name}")
-            return default
-        return None
+        try:
+            # Try to get the default loopback device (WASAPI on Windows)
+            for mic in sc.all_microphones(include_loopback=True):
+                if "loopback" in mic.name.lower() or "stereo mix" in mic.name.lower():
+                    print(f"🔊 Using loopback: {mic.name}")
+                    return mic
+            
+            # Fallback: use default microphone
+            default_mic = sc.default_microphone()
+            print(f"🔊 Using default microphone: {default_mic.name}")
+            return default_mic
+        except Exception as e:
+            print(f"⚠️ Error getting loopback device: {e}")
+            return None
     
     def extract_features(self, audio_data):
         """Extract GTZAN-compatible features from audio buffer."""
@@ -196,6 +203,11 @@ class LiveAudioAnalyzer:
         
         try:
             # Capture from loopback (system audio output)
+            device = self.get_loopback_device()
+            if not device:
+                print("❌ No loopback device found")
+                return
+            
             with device.recorder(samplerate=SAMPLE_RATE, channels=1, blocksize=1024) as mic:
                 while self.running:
                     # Record audio chunk
