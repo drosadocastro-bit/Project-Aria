@@ -1,6 +1,7 @@
 """
 Aria Auto EQ - Automatically adjusts EQ based on Spotify playback
 Polls Spotify for current track and applies matching EQ preset
+Enhanced with ML genre classification for unknown tracks
 """
 
 import sys
@@ -13,6 +14,8 @@ from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 import threading
+import tempfile
+import os
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -21,13 +24,18 @@ from core.audio_intelligence import (
     EQ_PRESETS, 
     apply_eq_to_apo,
     format_eq_for_dsp,
-    GENRE_EQ_MAP
+    GENRE_EQ_MAP,
+    GTZAN_TO_EQ,
+    get_ml_classifier
 )
 from core.voice import generate_voice, play_audio
 from config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, USE_ELEVENLABS
 
 # Token storage
 TOKEN_FILE = Path(__file__).parent / "state" / "spotify_token.json"
+
+# ML Classification cache (avoid re-classifying same track)
+_ml_cache = {}
 
 
 class SpotifyOAuth:
@@ -234,7 +242,7 @@ def get_artist_genres(oauth, artist_id):
 
 
 def get_current_track(oauth):
-    """Get currently playing track from Spotify with artist genres."""
+    """Get currently playing track from Spotify with artist genres and preview URL."""
     token = oauth.get_token()
     if not token:
         return None
@@ -259,7 +267,8 @@ def get_current_track(oauth):
                 "artist_id": artist_id,
                 "album": data["item"]["album"]["name"],
                 "is_playing": data.get("is_playing", False),
-                "spotify_genres": spotify_genres  # Artist genres from Spotify
+                "spotify_genres": spotify_genres,  # Artist genres from Spotify
+                "preview_url": data["item"].get("preview_url")  # 30-sec MP3 preview for ML
             }
     elif response.status_code == 204:
         return None  # Nothing playing
@@ -299,12 +308,83 @@ def genres_to_eq_preset(genres):
     return "v_shape", None, 0.0
 
 
-def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=False):
-    """Main loop - poll Spotify and auto-adjust EQ."""
+def classify_track_with_ml(track_id, preview_url):
+    """
+    Use ML classifier to detect genre from Spotify's 30-second preview.
+    Results are cached to avoid re-downloading/classifying.
+    
+    Returns:
+        (preset_name, genre, confidence) or (None, None, 0.0) on failure
+    """
+    global _ml_cache
+    
+    # Check cache first
+    if track_id in _ml_cache:
+        cached = _ml_cache[track_id]
+        return cached["preset"], cached["genre"], cached["confidence"]
+    
+    if not preview_url:
+        return None, None, 0.0
+    
+    classifier = get_ml_classifier()
+    if classifier is None or not classifier.is_trained:
+        return None, None, 0.0
+    
+    try:
+        # Download preview audio
+        print(f"   🤖 ML: Downloading preview for analysis...")
+        response = requests.get(preview_url, timeout=10)
+        if response.status_code != 200:
+            print(f"   ⚠️ ML: Preview download failed ({response.status_code})")
+            return None, None, 0.0
+        
+        # Save to temp file
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+            tmp.write(response.content)
+            tmp_path = tmp.name
+        
+        try:
+            # Extract features and classify
+            from core.genre_classifier import LiveAudioAnalyzer
+            analyzer = LiveAudioAnalyzer(classifier)
+            result = analyzer.classify_audio(filepath=tmp_path)
+            
+            if result and result.get("genre"):
+                ml_genre = result["genre"]
+                confidence = result["confidence"]
+                preset = GTZAN_TO_EQ.get(ml_genre, "v_shape")
+                
+                # Cache result
+                _ml_cache[track_id] = {
+                    "preset": preset,
+                    "genre": ml_genre,
+                    "confidence": confidence,
+                    "top_3": result.get("top_3", [])
+                }
+                
+                print(f"   🤖 ML: Detected {ml_genre} ({confidence:.0%}) → {preset}")
+                return preset, ml_genre, confidence
+        finally:
+            # Cleanup temp file
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
+                
+    except ImportError:
+        print("   ⚠️ ML: librosa not installed (pip install librosa)")
+    except Exception as e:
+        print(f"   ⚠️ ML: Classification failed: {e}")
+    
+    return None, None, 0.0
+
+
+def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=False, ml_enabled=True):
     """Main loop - poll Spotify and auto-adjust EQ."""
     print("\n" + "=" * 60)
     print("  🎵 AUTO EQ MODE - Monitoring Spotify")
     print(f"  🎙️ Voice: {'ON' if voice_enabled else 'OFF'}")
+    print(f"  🤖 ML Fallback: {'ON' if ml_enabled else 'OFF'}")
     print(f"  🚗 Driving Mode: {'ON (safe)' if driving_mode else 'OFF (verbose)'}")
     print("  Press Ctrl+C to stop")
     print("=" * 60)
@@ -320,6 +400,9 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
         "rock": "EQ: Rock.",
         "metal": "EQ: Metal.",
         "electronic": "EQ: Electronic.",
+        "edm": "EQ: EDM.",
+        "phonk": "EQ: Phonk.",
+        "lofi": "EQ: Lo-fi.",
         "hip_hop": "EQ: Hip-hop.",
         "pop": "EQ: Pop.",
         "latin": "EQ: Latin.",
@@ -336,6 +419,9 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
         "rock": "Switching to rock mode. Let's crank it up.",
         "metal": "Metal preset engaged. Time to headbang.",
         "electronic": "Electronic mode activated.",
+        "edm": "E.D.M. preset. Festival mode engaged.",
+        "phonk": "Phonk mode. Heavy bass, let's drift.",
+        "lofi": "Lo-fi chill activated. Vibes only.",
         "hip_hop": "Hip hop EQ. Feeling the beat.",
         "pop": "Pop preset. Nice and balanced.",
         "latin": "Latin vibes. Let's dance.",
@@ -393,12 +479,13 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
                     
                     # Get genres from Spotify API (artist genres)
                     spotify_genres = track.get("spotify_genres", [])
+                    source = "spotify"
                     
                     # First try: Spotify artist genres
                     new_preset, matched_genre, confidence = genres_to_eq_preset(spotify_genres)
                     genres = spotify_genres
                     
-                    # Fallback: Try our local dataset if Spotify didn't match
+                    # Fallback 1: Try our local dataset if Spotify didn't match
                     if confidence == 0.0:
                         result = mapper.get_eq_for_track(
                             track_name=track["track_name"],
@@ -409,11 +496,25 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
                             matched_genre = result.get("matched_genre")
                             confidence = result.get("confidence", 0.0)
                             genres = result.get("genres", [])
+                            source = "database"
+                    
+                    # Fallback 2: ML classification from audio preview
+                    if confidence == 0.0 and ml_enabled:
+                        preview_url = track.get("preview_url")
+                        ml_preset, ml_genre, ml_confidence = classify_track_with_ml(
+                            track_id, preview_url
+                        )
+                        if ml_preset and ml_confidence > 0.5:
+                            new_preset = ml_preset
+                            matched_genre = f"ML:{ml_genre}"
+                            confidence = ml_confidence
+                            genres = [ml_genre]
+                            source = "ml_classifier"
                     
                     # Logging - truthful about intent
                     print(f"\n🎵 Now Playing: {track['track_name']} - {track['artist']}")
                     if genres:
-                        print(f"   🏷️ Genres: {', '.join(genres[:5])}")
+                        print(f"   🏷️ Genres: {', '.join(genres[:5])} (source: {source})")
                     
                     # Apply EQ if preset changed
                     if new_preset != current_preset:
@@ -461,7 +562,7 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
 
 def main():
     print("=" * 60)
-    print("  Aria Auto EQ - Spotify Integration")
+    print("  Aria Auto EQ - Spotify Integration + ML Classification")
     print("=" * 60)
     
     # Check credentials
@@ -474,6 +575,13 @@ def main():
     oauth = SpotifyOAuth()
     mapper = GenreEQMapper()
     
+    # Check ML classifier
+    classifier = get_ml_classifier()
+    if classifier and classifier.is_trained:
+        print(f"🤖 ML classifier ready (accuracy: {classifier.accuracy:.0%})")
+    else:
+        print("⚠️ ML classifier not trained - run: python -m core.genre_classifier")
+    
     # Check auth status
     if oauth.is_authenticated():
         print("\n✅ Already authenticated with Spotify")
@@ -485,18 +593,22 @@ def main():
     track = get_current_track(oauth)
     if track:
         print(f"\n🎵 Currently playing: {track['track_name']} - {track['artist']}")
+        if track.get("preview_url"):
+            print(f"   📥 Preview available for ML analysis")
     else:
         print("\n⏸️ Nothing currently playing on Spotify")
     
     # Start auto mode
     print("\nStarting auto EQ mode...")
     print("   --no-voice    Disable voice announcements")
+    print("   --no-ml       Disable ML fallback classification")
     print("   --driving     Enable driving-safe mode (short phrases, 60s cooldown)")
     
     voice_on = "--no-voice" not in sys.argv
+    ml_on = "--no-ml" not in sys.argv
     driving = "--driving" in sys.argv
     
-    auto_eq_loop(oauth, mapper, voice_enabled=voice_on, driving_mode=driving)
+    auto_eq_loop(oauth, mapper, voice_enabled=voice_on, driving_mode=driving, ml_enabled=ml_on)
 
 
 if __name__ == "__main__":

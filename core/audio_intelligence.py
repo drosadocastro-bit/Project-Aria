@@ -1,6 +1,7 @@
 """
 Audio Intelligence Module - Genre-Based DSP EQ Integration
 Maps track genres to EQ presets using existing dataset clusters
+Enhanced with ML-based genre classification from GTZAN dataset
 """
 
 import os
@@ -12,6 +13,22 @@ from pathlib import Path
 DATASET_PATH = Path(__file__).parent.parent / "music_dataset"
 TRACKS_FILE = DATASET_PATH / "track_genre_clusters.csv"
 GENRE_ENCODED_FILE = DATASET_PATH / "cleaned_track_metadata_with_genres_encoded.csv"
+
+# ML Genre Classifier (lazy import to avoid circular deps)
+_ml_classifier = None
+
+def get_ml_classifier():
+    """Get or create ML genre classifier instance."""
+    global _ml_classifier
+    if _ml_classifier is None:
+        try:
+            from .genre_classifier import GenreClassifier
+            _ml_classifier = GenreClassifier()
+            if not _ml_classifier.is_trained:
+                print("⚠️ ML classifier not trained. Run: python -m core.genre_classifier")
+        except ImportError as e:
+            print(f"⚠️ ML classifier unavailable: {e}")
+    return _ml_classifier
 
 
 # ========== EQ PRESETS ==========
@@ -31,6 +48,12 @@ EQ_PRESETS = {
     "hip_hop": [6, 5, 3, 1, 0, 0, 1, 1, 2, 2],
     "classical": [0, 0, 0, 0, 0, 0, -1, -1, -2, -3],
     "jazz": [0, 1, 2, 2, 1, 0, 1, 2, 2, 1],
+    # NEW: Phonk/Drift preset - heavy bass, crispy highs
+    "phonk": [7, 6, 4, 1, -2, -2, 0, 3, 5, 4],
+    # NEW: EDM/Festival preset - sub bass + bright highs
+    "edm": [6, 5, 3, 0, 0, 1, 2, 4, 5, 5],
+    # NEW: Lo-fi/Chill preset - warm, rolled-off highs
+    "lofi": [3, 3, 2, 1, 0, 0, -1, -1, -2, -3],
     "pop": [1, 2, 3, 2, 1, 0, 1, 2, 3, 2],
     "latin": [4, 4, 3, 1, 0, 1, 2, 3, 3, 2],
     "country": [2, 2, 2, 2, 2, 1, 2, 3, 3, 2],
@@ -39,8 +62,10 @@ EQ_PRESETS = {
 
 # Genre to EQ preset mapping (authoritative source of truth)
 GENRE_EQ_MAP = {
-    # Phonk / Drift
-    "phonk": "v_shape", "drift phonk": "v_shape",
+    # Phonk / Drift - uses dedicated phonk preset
+    "phonk": "phonk", "drift phonk": "phonk", "brazilian phonk": "phonk",
+    "memphis phonk": "phonk", "aggressive phonk": "phonk",
+    "cowbell phonk": "phonk", "dark phonk": "phonk",
     
     # Rock variants
     "rock": "rock", "classic rock": "rock", "hard rock": "rock",
@@ -59,21 +84,23 @@ GENRE_EQ_MAP = {
     "symphonic metal": "metal", "industrial metal": "metal", "speed metal": "metal",
     "deathcore": "metal", "djent": "metal",
     
-    # Electronic / EDM variants
-    "electronic": "electronic", "edm": "electronic", "house": "electronic",
-    "techno": "electronic", "trance": "electronic", "dubstep": "electronic",
-    "drum and bass": "electronic", "electro": "electronic", "electro house": "electronic",
-    "synthwave": "electronic", "synthpop": "electronic", "chillwave": "electronic",
-    "future bass": "electronic", "progressive house": "electronic",
+    # Electronic / EDM variants - uses dedicated edm preset for festival stuff
+    "electronic": "electronic", "edm": "edm", "house": "edm",
+    "techno": "electronic", "trance": "edm", "dubstep": "edm",
+    "drum and bass": "electronic", "electro": "electronic", "electro house": "edm",
+    "synthwave": "electronic", "synthpop": "electronic", "chillwave": "lofi",
+    "future bass": "edm", "progressive house": "edm",
     "electroclash": "electronic", "darkwave": "electronic",
     "dreamwave": "electronic", "retrowave": "electronic", "outrun": "electronic",
-    "vaporwave": "electronic", "lo-fi": "electronic", "lofi": "electronic",
-    "ambient": "electronic", "downtempo": "electronic", "chillout": "electronic",
-    "deep house": "electronic", "tropical house": "electronic", "big room": "electronic",
-    "hardstyle": "electronic", "hardcore": "electronic", "gabber": "electronic",
-    "breakbeat": "electronic", "uk garage": "electronic", "bass music": "electronic",
-    "riddim": "electronic", "brostep": "electronic", "complextro": "electronic",
-    "future house": "electronic", "electropop": "pop",
+    "vaporwave": "lofi", "lo-fi": "lofi", "lofi": "lofi",
+    "lo-fi beats": "lofi", "lofi hip hop": "lofi", "chillhop": "lofi",
+    "ambient": "lofi", "downtempo": "lofi", "chillout": "lofi",
+    "deep house": "electronic", "tropical house": "edm", "big room": "edm",
+    "hardstyle": "edm", "hardcore": "edm", "gabber": "edm",
+    "breakbeat": "electronic", "uk garage": "electronic", "bass music": "edm",
+    "riddim": "edm", "brostep": "edm", "complextro": "edm",
+    "future house": "edm", "electropop": "pop",
+    "slap house": "edm", "brazilian bass": "edm", "tech house": "electronic",
     
     # Hip-hop variants
     "hip hop": "hip_hop", "rap": "hip_hop", "trap": "hip_hop",
@@ -135,6 +162,21 @@ GENRE_EQ_MAP = {
     
     # Default fallback
     "default": "v_shape"
+}
+
+# GTZAN genre to EQ preset mapping (for ML classifier output)
+# The GTZAN dataset has 10 genres, we map them to our expanded presets
+GTZAN_TO_EQ = {
+    "blues": "jazz",
+    "classical": "classical",
+    "country": "country",
+    "disco": "edm",       # Disco is dance music - use EDM preset
+    "hiphop": "hip_hop",
+    "jazz": "jazz",
+    "metal": "metal",
+    "pop": "pop",
+    "reggae": "latin",
+    "rock": "rock"
 }
 
 
@@ -250,7 +292,115 @@ class GenreEQMapper:
             "preset": preset_name,
             "eq_bands": eq_bands,
             "matched_genre": matched_genre,  # The genre that triggered this EQ
-            "confidence": confidence          # How confident we are (0.0-1.0)
+            "confidence": confidence,         # How confident we are (0.0-1.0)
+            "source": "database"              # Where the genre came from
+        }
+    
+    def get_eq_from_audio(self, audio_data=None, filepath=None, sr=22050):
+        """
+        Get EQ recommendation from audio data using ML classifier.
+        This works on ANY audio, not just tracks in our database!
+        
+        Args:
+            audio_data: numpy array of audio samples
+            filepath: path to audio file
+            sr: sample rate
+        
+        Returns:
+            Dict with ML-predicted genre, EQ preset, and confidence
+        """
+        classifier = get_ml_classifier()
+        
+        if classifier is None or not classifier.is_trained:
+            return {
+                "genres": [],
+                "preset": "v_shape",
+                "eq_bands": EQ_PRESETS["v_shape"],
+                "matched_genre": None,
+                "confidence": 0.0,
+                "source": "fallback",
+                "error": "ML classifier not available"
+            }
+        
+        try:
+            from .genre_classifier import LiveAudioAnalyzer
+            analyzer = LiveAudioAnalyzer(classifier)
+            
+            result = analyzer.classify_audio(
+                audio_data=audio_data, 
+                filepath=filepath, 
+                sr=sr
+            )
+            
+            if result is None:
+                return {
+                    "genres": [],
+                    "preset": "v_shape",
+                    "eq_bands": EQ_PRESETS["v_shape"],
+                    "matched_genre": None,
+                    "confidence": 0.0,
+                    "source": "fallback",
+                    "error": "Feature extraction failed"
+                }
+            
+            # Map GTZAN genre to EQ preset
+            ml_genre = result['genre']
+            preset_name = GTZAN_TO_EQ.get(ml_genre, "v_shape")
+            
+            return {
+                "genres": [ml_genre],
+                "preset": preset_name,
+                "eq_bands": EQ_PRESETS[preset_name],
+                "matched_genre": ml_genre,
+                "confidence": result['confidence'],
+                "source": "ml_classifier",
+                "top_3": result.get('top_3', []),
+                "all_probabilities": result.get('all_probabilities', {})
+            }
+            
+        except Exception as e:
+            return {
+                "genres": [],
+                "preset": "v_shape",
+                "eq_bands": EQ_PRESETS["v_shape"],
+                "matched_genre": None,
+                "confidence": 0.0,
+                "source": "fallback",
+                "error": str(e)
+            }
+    
+    def get_eq_hybrid(self, track_id=None, track_name=None, artist=None, 
+                      audio_data=None, filepath=None):
+        """
+        Hybrid EQ recommendation: database first, ML fallback.
+        
+        Tries database lookup first (fast, accurate for known tracks).
+        Falls back to ML classification if track not found.
+        
+        Returns:
+            Dict with EQ recommendation and source
+        """
+        # Try database first
+        db_result = self.get_eq_for_track(track_id, track_name, artist)
+        
+        if db_result.get("genres") and db_result.get("confidence", 0) > 0:
+            return db_result
+        
+        # Fallback to ML if we have audio
+        if audio_data is not None or filepath is not None:
+            ml_result = self.get_eq_from_audio(audio_data=audio_data, filepath=filepath)
+            ml_result["fallback_reason"] = "track_not_in_database"
+            return ml_result
+        
+        # No audio available, return default
+        return {
+            "genres": [],
+            "preset": "v_shape",
+            "eq_bands": EQ_PRESETS["v_shape"],
+            "matched_genre": None,
+            "confidence": 0.0,
+            "source": "default",
+            "fallback_reason": "no_data_available"
         }
     
     def search_tracks(self, query, limit=10):
