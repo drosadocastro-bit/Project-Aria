@@ -794,7 +794,7 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
                     # Logging - truthful about intent
                     print(f"\n🎵 Now Playing: {track['track_name']} - {track['artist']}")
                     if genres:
-                        print(f"   🏷️ Genres: {', '.join(genres[:5])} (source: {source})")
+                        print(f"   🏷️ Genres: {', '.join(str(g) for g in genres[:5] if g)} (source: {source})")
                     
                     # Apply EQ if preset changed
                     if new_preset != current_preset:
