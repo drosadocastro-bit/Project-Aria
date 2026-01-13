@@ -1,12 +1,14 @@
 """
 ARIA/JOI - GTI AI Copilot (Windows Edition)
 Integrates: LM Studio, ElevenLabs, OBD-II, NIC (optional)
+Supports: Offline TTS/STT (Coqui, pyttsx3, whisper.cpp)
 """
 
 import requests
 import json
 import asyncio
 import sys
+import os
 from pathlib import Path
 
 # Import local modules
@@ -16,6 +18,26 @@ from core.voice import generate_voice, play_audio, cleanup_old_files
 from core.obd_integration import obd_monitor
 from core.state_manager import create_state_manager, VehicleState
 from core.response_validator import create_response_validator
+
+# Import offline TTS/STT if enabled
+offline_tts_enabled = os.getenv("OFFLINE_TTS_ENABLED", "").lower() in ("true", "1", "yes")
+offline_stt_enabled = os.getenv("OFFLINE_STT_ENABLED", "").lower() in ("true", "1", "yes")
+
+if offline_tts_enabled:
+    try:
+        from core.offline_tts import speak, speak_async, initialize_tts, get_backend_info as get_tts_info
+        print("🎙️ Offline TTS enabled")
+    except ImportError as e:
+        print(f"⚠️ Offline TTS import failed: {e}")
+        offline_tts_enabled = False
+
+if offline_stt_enabled:
+    try:
+        from core.offline_stt import transcribe, initialize_stt, get_backend_info as get_stt_info
+        print("🎤 Offline STT enabled")
+    except ImportError as e:
+        print(f"⚠️ Offline STT import failed: {e}")
+        offline_stt_enabled = False
 
 # ========== NIC INTEGRATION (Optional) ==========
 
@@ -181,6 +203,122 @@ CRITICAL: Vehicle is in DRIVING mode. Your responses MUST be:
             return "Monitoring."
         return "Something went wrong. Let me try again."
 
+# ========== HTTP SERVER (For STT endpoint and static files) ==========
+
+async def handle_stt_upload(request):
+    """Handle /stt POST endpoint for audio transcription."""
+    try:
+        from aiohttp import web
+    except ImportError:
+        return web.Response(text='{"error": "aiohttp not installed"}', status=500)
+    
+    if not offline_stt_enabled:
+        return web.json_response({
+            'success': False,
+            'error': 'Offline STT not enabled. Set OFFLINE_STT_ENABLED=true'
+        }, status=503)
+    
+    try:
+        # Parse multipart form data
+        reader = await request.multipart()
+        
+        audio_data = None
+        language = "en"
+        
+        async for field in reader:
+            if field.name == 'audio':
+                # Save uploaded file to temp location
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+                    audio_data = await field.read()
+                    tmp.write(audio_data)
+                    audio_path = tmp.name
+            elif field.name == 'language':
+                language = (await field.read()).decode('utf-8')
+        
+        if not audio_data:
+            return web.json_response({
+                'success': False,
+                'error': 'No audio file provided'
+            }, status=400)
+        
+        # Transcribe using offline STT
+        result = transcribe(audio_path, language=language)
+        
+        # Clean up temp file
+        import os
+        try:
+            os.unlink(audio_path)
+        except:
+            pass
+        
+        return web.json_response(result)
+        
+    except Exception as e:
+        return web.json_response({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+async def handle_static_tts(request):
+    """Serve static TTS audio files from static/tts/."""
+    try:
+        from aiohttp import web
+    except ImportError:
+        return web.Response(text='aiohttp not installed', status=500)
+    
+    filename = request.match_info.get('filename', '')
+    
+    # Sanitize filename to prevent directory traversal
+    if '..' in filename or '/' in filename or '\\' in filename:
+        return web.Response(text='Invalid filename', status=400)
+    
+    static_dir = Path(__file__).parent / "static" / "tts"
+    file_path = static_dir / filename
+    
+    if not file_path.exists():
+        return web.Response(text='File not found', status=404)
+    
+    return web.FileResponse(file_path)
+
+
+async def create_http_server():
+    """Create HTTP server for STT endpoint and static files."""
+    try:
+        from aiohttp import web
+    except ImportError:
+        print("⚠️ aiohttp not installed. HTTP endpoints disabled.")
+        print("   Install: pip install aiohttp")
+        return None
+    
+    app = web.Application()
+    
+    # Add routes
+    app.router.add_post('/stt', handle_stt_upload)
+    app.router.add_get('/tts/{filename}', handle_static_tts)
+    
+    # Add health check endpoint
+    async def health_check(request):
+        status = {
+            'status': 'ok',
+            'offline_tts_enabled': offline_tts_enabled,
+            'offline_stt_enabled': offline_stt_enabled,
+            'lm_studio_connected': test_lm_studio_connection(),
+            'obd_connected': obd_monitor.connected
+        }
+        
+        if offline_tts_enabled:
+            status['tts_backend'] = get_tts_info()
+        if offline_stt_enabled:
+            status['stt_backend'] = get_stt_info()
+        
+        return web.json_response(status)
+    
+    app.router.add_get('/health', health_check)
+    
+    return app
+
 # ========== WEBSOCKET SERVER (For Avatar) ==========
 
 async def handle_websocket(websocket, path):
@@ -224,10 +362,20 @@ async def handle_websocket(websocket, path):
                     'thinking': False
                 }))
                 
-                # Generate voice
-                audio_path = generate_voice(reply)
-                if audio_path:
-                    play_audio(audio_path)
+                # Generate voice (offline TTS if enabled, otherwise ElevenLabs)
+                if offline_tts_enabled:
+                    tts_result = await speak_async(reply)
+                    if tts_result.get('success'):
+                        audio_path = Path(tts_result['audio_path'])
+                        # Send audio file path for browser to fetch
+                        await websocket.send(json.dumps({
+                            'type': 'audio',
+                            'path': f'/tts/{audio_path.name}'
+                        }))
+                else:
+                    audio_path = generate_voice(reply)
+                    if audio_path:
+                        play_audio(audio_path)
                 
                 cleanup_old_files()
                 
@@ -258,12 +406,29 @@ async def broadcast_car_status():
 
 
 async def start_websocket_server():
-    """Start WebSocket server."""
+    """Start WebSocket and HTTP servers."""
     try:
         import websockets
     except ImportError:
         print("❌ websockets not installed. Run: pip install websockets")
         return
+    
+    # Initialize offline TTS/STT if enabled
+    if offline_tts_enabled:
+        from core.offline_tts import initialize_tts
+        if initialize_tts():
+            info = get_tts_info()
+            print(f"✅ Offline TTS initialized: {info['backend']}")
+        else:
+            print("⚠️ Offline TTS initialization failed")
+    
+    if offline_stt_enabled:
+        from core.offline_stt import initialize_stt
+        if initialize_stt():
+            info = get_stt_info()
+            print(f"✅ Offline STT initialized: {info['backend']}")
+        else:
+            print("⚠️ Offline STT initialization failed")
     
     # Test LM Studio connection
     print("🔍 Checking LM Studio connection...")
@@ -284,6 +449,19 @@ async def start_websocket_server():
     print("✅ LM Studio connected")
     print(f"   Model: {LM_STUDIO_MODEL}\n")
     
+    # Start HTTP server (for STT endpoint and static files)
+    http_app = await create_http_server()
+    if http_app:
+        from aiohttp import web
+        http_runner = web.AppRunner(http_app)
+        await http_runner.setup()
+        http_port = WEBSOCKET_PORT + 1  # Use next port for HTTP
+        http_site = web.TCPSite(http_runner, WEBSOCKET_HOST, http_port)
+        await http_site.start()
+        print(f"📡 HTTP server started on http://{WEBSOCKET_HOST}:{http_port}")
+        print(f"   Endpoints: /stt (POST), /tts/<file> (GET), /health (GET)")
+    
+    # Start WebSocket server
     server = await websockets.serve(
         handle_websocket,
         WEBSOCKET_HOST,
@@ -295,7 +473,9 @@ async def start_websocket_server():
     print(f"\n   Personality: {PERSONALITIES[current_personality]['name']}")
     print(f"   Language: {current_language}")
     print(f"   NIC: {'Enabled' if NIC_ENABLED else 'Disabled'}")
-    print(f"   OBD: {'Connected' if obd_monitor.connected else 'Not Connected'}\n")
+    print(f"   OBD: {'Connected' if obd_monitor.connected else 'Not Connected'}")
+    print(f"   Offline TTS: {'Enabled' if offline_tts_enabled else 'Disabled'}")
+    print(f"   Offline STT: {'Enabled' if offline_stt_enabled else 'Disabled'}\n")
     
     # Start car status broadcasting
     asyncio.create_task(broadcast_car_status())
@@ -337,7 +517,15 @@ def console_mode():
     # Greeting
     greeting = get_greeting(current_personality)
     print(f"💜 {persona['name']}: {greeting}\n")
-    if USE_ELEVENLABS:
+    
+    # Initialize offline TTS if enabled
+    if offline_tts_enabled:
+        from core.offline_tts import initialize_tts
+        if initialize_tts():
+            result = speak(greeting)
+            if result.get('success'):
+                print(f"   (TTS: {result['backend']})")
+    elif USE_ELEVENLABS:
         audio = generate_voice(greeting)
         if audio:
             play_audio(audio)
@@ -400,7 +588,15 @@ def console_mode():
             elif user_input.lower() in ["exit", "quit"]:
                 goodbye = get_goodbye(current_personality)
                 print(f"\n💜 {PERSONALITIES[current_personality]['name']}: {goodbye}\n")
-                if USE_ELEVENLABS:
+                
+                # Generate goodbye voice
+                if offline_tts_enabled:
+                    from core.offline_tts import speak
+                    result = speak(goodbye)
+                    if result.get('success'):
+                        import time
+                        time.sleep(3)
+                elif USE_ELEVENLABS:
                     audio = generate_voice(goodbye)
                     if audio:
                         play_audio(audio)
@@ -415,8 +611,15 @@ def console_mode():
             persona_name = PERSONALITIES[current_personality]['name']
             print(f"\n💜 {persona_name}: {reply}\n")
             
-            # Generate voice
-            if USE_ELEVENLABS:
+            # Generate voice (offline or ElevenLabs)
+            if offline_tts_enabled:
+                from core.offline_tts import speak
+                result = speak(reply)
+                if result.get('success'):
+                    # In console mode, audio is generated but not played
+                    # User can manually play from static/tts/ if desired
+                    pass
+            elif USE_ELEVENLABS:
                 audio_path = generate_voice(reply)
                 if audio_path:
                     play_audio(audio_path)
