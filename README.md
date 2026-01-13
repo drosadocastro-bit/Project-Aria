@@ -70,7 +70,9 @@ Tools needed: T25 Torx, 10mm socket...
 Project_Aria/
 ├── aria.py                        # Main AI copilot (console + WebSocket)
 ├── auto_eq.py                     # 🎛️ Spotify Auto EQ (monitors playback)
+├── live_audio_analyzer.py         # 🎧 Real-time system audio classifier
 ├── test_eq.py                     # Manual EQ preset tester
+├── test_ml_classifier.py          # ML classifier test suite
 ├── config.py                      # Configuration
 │
 ├── core/
@@ -78,15 +80,22 @@ Project_Aria/
 │   ├── voice.py                   # ElevenLabs TTS
 │   ├── obd_integration.py         # OBD-II connection
 │   ├── state_manager.py           # Vehicle state detection (DRIVING/PARKED/GARAGE)
-│   ├── response_validator.py     # DRIVING mode response enforcement
-│   └── audio_intelligence.py      # 🎛️ Genre→EQ mapping engine
+│   ├── response_validator.py      # DRIVING mode response enforcement
+│   ├── audio_intelligence.py      # 🎛️ Genre→EQ mapping engine
+│   └── genre_classifier.py        # 🤖 ML genre classifier (GTZAN-trained)
+│
+├── models/
+│   └── genre_classifier_rf.pkl    # Trained Random Forest model (86% accuracy)
 │
 ├── docs/
 │   └── ARIA_DRIVING_CONTRACT.md   # Complete operational state specification
 │
-├── music_dataset/                 # 🎵 1,449 tracks with genre labels
-│   ├── track_genre_clusters.csv
-│   └── cleaned_track_metadata_with_genres_encoded.csv
+├── music_dataset/                 # 🎵 Training data & track database
+│   ├── track_genre_clusters.csv   # 1,449 Spotify tracks with genres
+│   ├── cleaned_track_metadata_with_genres_encoded.csv
+│   └── Data/                      # GTZAN dataset (10 genres × 100 tracks)
+│       ├── features_30_sec.csv    # 1,000 samples - full track features
+│       └── features_3_sec.csv     # 9,990 samples - 3-second segments
 │
 ├── queue/                         # Audio files (auto-created)
 ├── logs/                          # Logs (auto-created)
@@ -119,7 +128,44 @@ start.bat
 
 ## 🎛️ Audio Intelligence (Auto EQ)
 
-Automatically adjusts EQ based on what's playing on Spotify. Detects genre from your music library and applies optimized presets in real-time.
+Automatically adjusts EQ based on what's playing on Spotify. Uses a **3-tier detection system** with ML fallback for unknown tracks.
+
+### 🤖 ML Genre Classifier (GTZAN-Trained)
+
+We trained a **Random Forest classifier** on the [GTZAN dataset](http://marsyas.info/downloads/datasets.html) - the "MNIST of music" - achieving **86% accuracy** across 10 genres.
+
+**Training Data:**
+| Dataset | Samples | Description |
+|---------|---------|-------------|
+| GTZAN 30-sec | 1,000 | Full 30-second clips (100 per genre) |
+| GTZAN 3-sec | 9,990 | 3-second segments (10× more training data) |
+| Spotify tracks | 1,449 | Your music library with genre tags |
+
+**Audio Features Extracted (58 total):**
+- Chroma STFT (harmonic content)
+- Spectral centroid, bandwidth, rolloff (brightness/timbre)
+- MFCCs 1-20 (timbral texture) - most important!
+- Zero crossing rate (percussiveness)
+- Tempo (BPM)
+
+**Supported Genres:**
+`blues` `classical` `country` `disco` `hiphop` `jazz` `metal` `pop` `reggae` `rock`
+
+### Detection Pipeline
+
+```
+🎵 Track plays on Spotify
+    │
+    ├─→ 1️⃣ Spotify API genres (instant, 100% confidence)
+    │       "symphonic metal" → metal EQ
+    │
+    ├─→ 2️⃣ Local database lookup (1,449 tracks)
+    │       Track name/artist match → stored genre
+    │
+    └─→ 3️⃣ ML Classification (fallback for unknown tracks)
+            Downloads 30-sec preview → Extract features → Predict genre
+            "ML:metal (64%)" → metal EQ
+```
 
 ### Setup
 
@@ -131,35 +177,55 @@ Automatically adjusts EQ based on what's playing on Spotify. Detects genre from 
    ```
 3. **Run Auto EQ**:
    ```cmd
-   python auto_eq.py              # Parked mode (verbose)
+   python auto_eq.py              # Full mode with ML fallback
    python auto_eq.py --driving    # Driving mode (short phrases, 60s cooldown)
    python auto_eq.py --no-voice   # Silent mode
+   python auto_eq.py --no-ml      # Disable ML fallback (faster)
    ```
 
-### How It Works
+### Live Audio Analyzer (No Spotify Required)
 
+For YouTube, local files, or any system audio:
+
+```cmd
+python live_audio_analyzer.py
 ```
-Spotify → Track Detection → Genre Lookup → EQ Preset → Equalizer APO
-                              ↓
-                    "phonk → v_shape (100%)"
-                    "metal → metal (100%)"
+
+Captures system audio via WASAPI loopback, extracts features in real-time, and applies EQ based on ML classification.
+
+### EQ Presets (19 Total)
+
+| Preset | Genres | Character |
+|--------|--------|-----------|
+| `rock` | rock, classic rock, hard rock, grunge, aor | Punchy mids, clear highs |
+| `metal` | metal, thrash, death metal, nu metal | Scooped mids, crispy highs |
+| `electronic` | techno, synthwave, deep house | Balanced electronic |
+| `edm` | dubstep, hardstyle, trance, big room | Sub bass + bright highs 🎪 |
+| `phonk` | phonk, drift phonk, brazilian phonk | **Heavy bass** + crispy highs 🔊 |
+| `lofi` | lo-fi, chillhop, vaporwave | Warm, rolled-off highs 😌 |
+| `hip_hop` | hip hop, rap, trap, drill | Bass-forward |
+| `latin` | reggaeton, salsa, bachata, urbano | Rhythmic bass |
+| `classical` | classical, orchestra, opera | Pure, flat response |
+| `jazz` | jazz, blues, smooth jazz | Warm mids |
+| `pop` | pop, dance pop, k-pop | Balanced, radio-friendly |
+| `acoustic` | folk, indie folk, singer-songwriter | Natural, organic |
+| `country` | country, americana, bluegrass | Twangy presence |
+
+### Retrain the Model
+
+If you add more training data:
+
+```cmd
+# Delete existing model and retrain
+del models\genre_classifier_rf.pkl
+python -m core.genre_classifier
 ```
-
-### EQ Presets
-
-| Preset | Genres |
-|--------|--------|
-| `rock` | rock, classic rock, hard rock, grunge, aor |
-| `metal` | metal, thrash, death metal, nu metal |
-| `electronic` | EDM, house, techno, synthwave |
-| `hip_hop` | hip hop, rap, trap |
-| `latin` | reggaeton, salsa, bachata, urbano latino |
-| `v_shape` | phonk, drift phonk, default |
 
 ### Manual Testing
 
 ```cmd
-python test_eq.py    # Interactive preset selector
+python test_ml_classifier.py    # Full test suite
+python test_eq.py               # Interactive preset selector
 ```
 
 ## Manual Setup
