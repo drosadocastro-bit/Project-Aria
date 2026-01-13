@@ -98,12 +98,12 @@ class TestOfflineSTT:
                 try:
                     os.unlink(model_path)
                     os.unlink(binary_path)
-                except:
+                except OSError:
                     pass
         finally:
             try:
                 os.unlink(audio_path)
-            except:
+            except OSError:
                 pass
     
     def test_transcribe_filters_metadata(self):
@@ -140,12 +140,12 @@ Actual transcription here"""
                     try:
                         os.unlink(model_file.name)
                         os.unlink(binary_file.name)
-                    except:
+                    except OSError:
                         pass
         finally:
             try:
                 os.unlink(audio_path)
-            except:
+            except OSError:
                 pass
 
 

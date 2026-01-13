@@ -249,7 +249,7 @@ async def handle_stt_upload(request):
         import os
         try:
             os.unlink(audio_path)
-        except:
+        except OSError:
             pass
         
         return web.json_response(result)

@@ -275,11 +275,12 @@ def cleanup_old_files(max_files: int = 20):
     files = sorted(static_tts_dir.glob("*.wav"), key=os.path.getctime)
     
     while len(files) > max_files:
+        file_to_delete = files[0]
         try:
-            files[0].unlink()
-            logger.debug(f"Cleaned up old TTS file: {files[0].name}")
+            file_to_delete.unlink()
+            logger.debug(f"Cleaned up old TTS file: {file_to_delete.name}")
         except Exception as e:
-            logger.warning(f"Failed to delete {files[0]}: {e}")
+            logger.warning(f"Failed to delete {file_to_delete}: {e}")
         files = files[1:]
 
 
