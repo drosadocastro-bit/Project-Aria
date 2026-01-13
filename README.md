@@ -19,6 +19,7 @@ Combining holographic personality, real-time car data, and intelligent audio.
 
 - 🌌 **Dual Personalities:** Nova (holographic empath) & Aria (driver copilot)  
 - 🧠 Local LLM via LM Studio + ElevenLabs TTS  
+- 🎙️ **Offline TTS/STT:** Coqui TTS & whisper.cpp (optional, privacy-first)  
 - 🚗 Real-time OBD-II telemetry (speed, RPM, coolant, etc.)  
 - 🎛️ Auto EQ — Spotify-aware DSP with offline ML fallback  
 - 📚 NIC repair-manual integration (optional)  
@@ -85,6 +86,8 @@ Project_Aria/
 ├── core/
 │   ├── personality.py             # Nova/Aria personalities
 │   ├── voice.py                   # ElevenLabs TTS
+│   ├── offline_tts.py             # 🎙️ Offline TTS (Coqui/pyttsx3)
+│   ├── offline_stt.py             # 🎤 Offline STT (whisper.cpp)
 │   ├── obd_integration.py         # OBD-II connection
 │   ├── state_manager.py           # Vehicle state detection
 │   ├── response_validator.py      # DRIVING mode response enforcement
@@ -211,7 +214,7 @@ python live_audio_analyzer.py
 
 - **Python 3.10+**
 - **LM Studio** running at `http://127.0.0.1:1234` with `google/gemma-3n-e4b`
-- **ElevenLabs** API key (set `ELEVENLABS_KEY` env var)
+- **ElevenLabs** API key (set `ELEVENLABS_KEY` env var) — *or use offline TTS*
 - **Equalizer APO** for Windows audio DSP
 - **OBD-II adapter** (optional, Bluetooth)
 
@@ -223,18 +226,43 @@ git clone https://github.com/drosadocastro-bit/Project-Aria.git
 cd Project-Aria
 pip install -r requirements.txt
 
-# 2. Configure
+# 2. (Optional) Install offline TTS/STT
+pip install -r requirements-offline.txt
+./scripts/download_models.sh     # Linux/macOS
+# OR
+.\scripts\download_models.ps1    # Windows
+
+# 3. Configure
 copy config.example.py config.py
 # Edit config.py with your API keys
 
-# 3. Train ML classifier (optional)
+# 4. Train ML classifier (optional)
 python -m core.genre_classifier
 
-# 4. Run
+# 5. Run
 python aria.py                    # Console mode
 python aria.py --mode avatar      # WebSocket + holographic avatar
 python auto_eq.py                 # Spotify Auto EQ
 ```
+
+### Offline TTS/STT Setup
+
+For privacy-first, internet-free voice interaction:
+
+```bash
+# See comprehensive guide
+cat docs/deployment/OFFLINE_TTS_STT.md
+
+# Quick setup
+export OFFLINE_TTS_ENABLED=true
+export OFFLINE_STT_ENABLED=true
+./scripts/download_models.sh
+```
+
+**Endpoints:**
+- `POST /stt` - Upload audio, get transcription
+- `GET /tts/<file>.wav` - Fetch generated speech
+- `GET /health` - Check backend status
 
 ### Windows Quick Start
 
@@ -280,6 +308,7 @@ $ python auto_eq.py --stats
 
 ## 📚 Additional Resources
 
+- **docs/deployment/OFFLINE_TTS_STT.md** - Complete offline voice setup guide
 - **TROUBLESHOOTING.md** - Solutions for common issues
 - **EXAMPLES.md** - Sample queries and commands
 - **docs/ARIA_DRIVING_CONTRACT.md** - Complete driving safety specification
