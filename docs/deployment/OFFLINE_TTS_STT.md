@@ -243,7 +243,7 @@ curl -X POST http://localhost:5001/stt \
 The offline TTS automatically returns audio paths compatible with the browser avatar:
 
 ```javascript
-// In joi_avatar.html or custom UI
+// In static/nova_avatar.html or custom UI
 const response = await fetch(`/tts/${filename}`);
 const audio = new Audio(response.url);
 audio.play();

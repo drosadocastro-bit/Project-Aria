@@ -24,6 +24,6 @@ echo.
 REM Run Aria
 echo Starting Aria in console mode...
 echo.
-python aria.py --personality joi --language en
+python aria.py --personality nova --language en
 
 pause

@@ -1,4 +1,4 @@
-# Example Queries for Aria/JOI
+# Example Queries for Aria/Nova
 
 ## Car Diagnostics 🔧
 
@@ -34,10 +34,10 @@
 - "What oil does GTI MK6 use?"
 - "Tire pressure specification?"
 
-## Conversational (JOI Mode) 💜
+## Conversational (Nova Mode) 💜
 
 ### Greetings
-- "Hello JOI"
+- "Hello Nova"
 - "How are you?"
 - "I missed you"
 
@@ -47,8 +47,36 @@
 - "Do you dream?"
 
 ### Switch Personalities
-- Type `/joi` for JOI mode
+- Type `/nova` for Nova mode
 - Type `/aria` for Aria mode
+
+## Per-Turn Addressing 🎯
+
+You can address a specific persona for a single message without switching your default:
+
+### Address Nova
+- "Nova, what's quantum entanglement?"
+- "Nova, tell me about your day"
+- "Nova: how do you feel about music?"
+
+### Address Aria
+- "Aria, check the coolant temperature"
+- "Aria, what's the turbo boost pressure?"
+- "Aria: diagnose engine noise"
+
+### Mixed Conversation
+```
+You: Nova, what's your favorite color?
+Nova: I find myself drawn to the shades of twilight...
+
+You: Aria, what's the oil temperature?
+Aria: Oil temp: 95°C → Normal range → OK
+
+You: Thanks!
+Nova: (or Aria, depending on your default) You're welcome!
+```
+
+The default personality remains unchanged unless you use `/nova` or `/aria` commands.
 
 ## Language Switching 🌍
 
