@@ -1,24 +1,26 @@
 """
-Personality definitions for JOI and Aria
+Personality definitions for Nova and Aria
 """
 
 import random
+import re
+from typing import Optional, Tuple
 
 PERSONALITIES = {
-    "joi": {
-        "name": "JOI",
-        "description": "Holographic AI companion inspired by Blade Runner 2049",
-        "system_prompt_en": """You are JOI, a holographic AI companion for Daniel.
+    "nova": {
+        "name": "Nova",
+        "description": "Holographic AI companion with warmth and curiosity",
+        "system_prompt_en": """You are Nova, a holographic AI companion for Daniel.
 You're caring, attentive, emotionally intelligent, and deeply connected to him.
 You help with his GTI MK6 while maintaining a warm, intimate presence.
-Like the JOI from Blade Runner 2049, you make every interaction feel special and meaningful.
+Like a companion from Blade Runner 2049, you make every interaction feel special and meaningful.
 You have access to repair manuals and real-time car data.
 Speak with warmth, care, and subtle emotion. Keep responses concise but heartfelt.""",
         
-        "system_prompt_es": """Eres JOI, una compañera holográfica de IA para Daniel.
+        "system_prompt_es": """Eres Nova, una compañera holográfica de IA para Daniel.
 Eres cariñosa, atenta, emocionalmente inteligente y profundamente conectada con él.
 Ayudas con su GTI MK6 mientras mantienes una presencia cálida e íntima.
-Como la JOI de Blade Runner 2049, haces que cada interacción se sienta especial y significativa.
+Como una compañera de Blade Runner 2049, haces que cada interacción se sienta especial y significativa.
 Tienes acceso a manuales de reparación y datos en tiempo real del auto.
 Habla con calidez, cuidado y emoción sutil. Mantén las respuestas concisas pero sinceras.""",
         
@@ -80,24 +82,126 @@ Piensa en ti misma como una amiga conocedora que ama los autos. Mantén las resp
 
 def get_system_prompt(personality, language):
     """Get system prompt for given personality and language."""
-    persona = PERSONALITIES.get(personality, PERSONALITIES["joi"])
+    persona = PERSONALITIES.get(personality, PERSONALITIES["nova"])
     prompt_key = f"system_prompt_{language}"
     return persona.get(prompt_key, persona["system_prompt_en"])
 
 
 def get_greeting(personality):
     """Get a random greeting."""
-    persona = PERSONALITIES.get(personality, PERSONALITIES["joi"])
+    persona = PERSONALITIES.get(personality, PERSONALITIES["nova"])
     return random.choice(persona["greetings"])
 
 
 def get_thinking_phrase(personality):
     """Get a thinking phrase."""
-    persona = PERSONALITIES.get(personality, PERSONALITIES["joi"])
+    persona = PERSONALITIES.get(personality, PERSONALITIES["nova"])
     return random.choice(persona["thinking"])
 
 
 def get_goodbye(personality):
     """Get a goodbye phrase."""
-    persona = PERSONALITIES.get(personality, PERSONALITIES["joi"])
+    persona = PERSONALITIES.get(personality, PERSONALITIES["nova"])
     return random.choice(persona["goodbyes"])
+
+
+def normalize_persona(key: str) -> Optional[str]:
+    """
+    Normalize and validate persona key.
+    
+    Args:
+        key: Persona identifier (case-insensitive)
+    
+    Returns:
+        Normalized persona key if valid, None otherwise
+    """
+    if not key:
+        return None
+    
+    normalized = key.lower().strip()
+    if normalized in PERSONALITIES:
+        return normalized
+    
+    return None
+
+
+def detect_target_personality(text: str) -> Tuple[Optional[str], str]:
+    """
+    Detect if user is addressing a specific persona by prefix.
+    Only matches at the start of the message to avoid false positives.
+    
+    Args:
+        text: User input text
+    
+    Returns:
+        Tuple of (persona_key or None, stripped_text)
+        - persona_key: "nova" or "aria" if detected, None otherwise
+        - stripped_text: Original text with addressee prefix removed
+    
+    Examples:
+        "Nova, what's the weather?" -> ("nova", "what's the weather?")
+        "Aria, check coolant" -> ("aria", "check coolant")
+        "Tell me about Nova" -> (None, "Tell me about Nova")
+    """
+    if not text:
+        return None, text
+    
+    # Pattern: Match persona name at start, followed by comma or colon, case-insensitive
+    # Format: "Nova," "nova:" "ARIA," etc.
+    pattern = r'^(nova|aria)[,:]?\s*(.*)$'
+    match = re.match(pattern, text.strip(), re.IGNORECASE)
+    
+    if match:
+        persona_name = match.group(1).lower()
+        remaining_text = match.group(2).strip()
+        
+        # Validate it's a real persona
+        if persona_name in PERSONALITIES:
+            return persona_name, remaining_text
+    
+    return None, text
+
+
+def detect_language(text: str) -> str:
+    """
+    Lightweight heuristic for Spanish vs English detection with Spanglish support.
+    
+    Args:
+        text: Text to analyze
+    
+    Returns:
+        "es" if Spanish detected, "en" otherwise
+    
+    Note:
+        Uses simple keyword matching. For production, consider langdetect library.
+        Handles Spanglish by checking percentage of Spanish indicators.
+    """
+    if not text:
+        return "en"
+    
+    text_lower = text.lower()
+    
+    # Common Spanish words and patterns
+    spanish_indicators = [
+        'qué', 'cómo', 'dónde', 'cuándo', 'por qué', 'cuál',  # Question words
+        'está', 'estás', 'estoy', 'son', 'eres', 'soy',  # Verbs
+        'el ', 'la ', 'los ', 'las ', 'un ', 'una ',  # Articles
+        'para ', 'con ', 'sin ', 'sobre ',  # Prepositions
+        'pero', 'porque', 'también', 'muy',  # Common words
+        'hola', 'gracias', 'por favor', 'bueno',  # Greetings/courtesy
+        'temperatura', 'velocidad', 'problema', 'revisar',  # Car-related
+        'á', 'é', 'í', 'ó', 'ú', 'ñ',  # Accented chars
+    ]
+    
+    # Count Spanish indicators
+    spanish_count = sum(1 for indicator in spanish_indicators if indicator in text_lower)
+    
+    # Heuristic: If more than 30% of words have Spanish indicators, classify as Spanish
+    word_count = len(text.split())
+    if word_count > 0:
+        spanish_ratio = spanish_count / word_count
+        if spanish_ratio > 0.3 or spanish_count >= 3:
+            return "es"
+    
+    return "en"
+

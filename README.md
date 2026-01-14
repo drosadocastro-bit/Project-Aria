@@ -1,6 +1,6 @@
 # 🚗 Project ARIA — GTI AI Copilot (Nova Edition)
 
-> **Version:** 0.7.0 (Nova Memory Update)  
+> **Version:** 0.8.0 (Nova Persona Routing Update)  
 > **Status:** Private Development — Public Release Planned Q2 2026  
 
 **The dual-soul AI copilot for your VW GTI MK6**  
@@ -18,12 +18,13 @@ Combining holographic personality, real-time car data, and intelligent audio.
 ## ⚙️ Features
 
 - 🌌 **Dual Personalities:** Nova (holographic empath) & Aria (driver copilot)  
+- 🎯 **Per-Turn Persona Routing:** Address "Nova, ..." or "Aria, ..." in any message
+- 🌍 **Spanglish-Friendly:** Auto-detects Spanish, English, or mixed language per turn
 - 🧠 Local LLM via LM Studio + ElevenLabs TTS  
 - 🎙️ **Offline TTS/STT:** Coqui TTS & whisper.cpp (optional, privacy-first)  
 - 🚗 Real-time OBD-II telemetry (speed, RPM, coolant, etc.)  
 - 🎛️ Auto EQ — Spotify-aware DSP with offline ML fallback  
 - 📚 NIC repair-manual integration (optional)  
-- 🌍 English / Spanish bilingual interface  
 - 🧩 Persistent Memory + Offline Cache System  
 - 🚦 Safety-aware Driving Contract  
 
@@ -52,11 +53,20 @@ graph TD
 | **Nova** 🌌 | Emotive | Holographic AI with warmth and curiosity |
 | **Aria** 🚗 | Technical | Grounded copilot focused on safety and data |
 
-Switch instantly:
+**Per-Turn Addressing:**
 ```
-/nova   → activate Nova
-/aria   → activate Aria
+"Nova, explain quantum mechanics"     → Routes to Nova for this message only
+"Aria, what's the coolant temp?"      → Routes to Aria for this message only
+"What about thermodynamics?"          → Uses your default personality
 ```
+
+**Explicit Switch (persists for session):**
+```
+/nova   → activate Nova as default
+/aria   → activate Aria as default
+```
+
+**Migration Note:** The JOI persona has been renamed to **Nova**. All functionality remains the same—this is a canonical naming update.
 
 ---
 

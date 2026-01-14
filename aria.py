@@ -19,6 +19,14 @@ from core.obd_integration import obd_monitor
 from core.state_manager import create_state_manager, VehicleState
 from core.response_validator import create_response_validator
 
+# Import TTS router for persona-aware voice
+try:
+    from core.tts_router import speak_for_persona_async, get_persona_ui_config
+    TTS_ROUTER_AVAILABLE = True
+except ImportError:
+    TTS_ROUTER_AVAILABLE = False
+    print("⚠️ TTS router not available")
+
 # Import offline TTS/STT if enabled
 offline_tts_enabled = os.getenv("OFFLINE_TTS_ENABLED", "").lower() in ("true", "1", "yes")
 offline_stt_enabled = os.getenv("OFFLINE_STT_ENABLED", "").lower() in ("true", "1", "yes")
@@ -114,8 +122,19 @@ def test_lm_studio_connection():
         return False
 
 
-def chat_with_lm_studio(message):
-    """Chat using LM Studio with state-aware response validation."""
+def chat_with_lm_studio(message, persona_override=None, language_override=None):
+    """
+    Chat using LM Studio with state-aware response validation.
+    
+    Args:
+        message: User message (already stripped of persona prefix if any)
+        persona_override: Optional persona to use for this turn (None = use current_personality)
+        language_override: Optional language to use for this turn (None = use current_language)
+    """
+    
+    # Determine which persona and language to use for this turn
+    active_persona = persona_override if persona_override else current_personality
+    active_language = language_override if language_override else current_language
     
     # Get current vehicle state
     car_status = obd_monitor.get_live_data()
@@ -140,8 +159,8 @@ def chat_with_lm_studio(message):
     if car_context:
         enhanced_message = f"{car_context}\n\n{enhanced_message}"
     
-    # Get system prompt - modify for DRIVING state
-    system_prompt = get_system_prompt(current_personality, current_language)
+    # Get system prompt for the active persona - modify for DRIVING state
+    system_prompt = get_system_prompt(active_persona, active_language)
     
     # Add DRIVING mode instructions if needed
     if current_state == VehicleState.DRIVING:
@@ -174,7 +193,7 @@ CRITICAL: Vehicle is in DRIVING mode. Your responses MUST be:
         reply = response.json()['choices'][0]['message']['content']
         reply = reply.strip()
         
-        # Validate response based on state
+        # Validate response based on state (regardless of persona)
         is_valid, sanitized_reply, violation = response_validator.validate_response(
             reply, current_state
         )
@@ -329,14 +348,20 @@ async def handle_websocket(websocket, path):
         print("❌ websockets not installed. Run: pip install websockets")
         return
     
+    global current_personality, current_language
+    
     connected_clients.add(websocket)
     print(f"🌟 Avatar connected: {websocket.remote_address}")
     
     # Send greeting
     greeting = get_greeting(current_personality)
+    ui_config = get_persona_ui_config(current_personality) if TTS_ROUTER_AVAILABLE else {}
+    
     await websocket.send(json.dumps({
         'type': 'greeting',
-        'text': greeting
+        'text': greeting,
+        'persona': current_personality,
+        'ui': ui_config
     }))
     
     try:
@@ -346,38 +371,83 @@ async def handle_websocket(websocket, path):
             if data['type'] == 'query':
                 question = data['text']
                 
+                # Detect if user is addressing a specific persona for this turn
+                target_persona, stripped_question = detect_target_personality(question)
+                
+                # Detect language for this turn
+                turn_language = detect_language(question)
+                
+                # Determine which persona to use for this response
+                # If target_persona is detected, use it for this turn only
+                # Otherwise use current_personality
+                response_persona = target_persona if target_persona else current_personality
+                
+                print(f"📝 Query: '{question}' -> Persona: {response_persona}, Lang: {turn_language}")
+                if target_persona:
+                    print(f"   (Per-turn routing to {target_persona})")
+                
                 # Send "thinking" status
                 await websocket.send(json.dumps({
                     'type': 'thinking',
                     'active': True
                 }))
                 
-                # Get response
-                reply = chat_with_lm_studio(question)
+                # Get response using the persona for this turn
+                reply = chat_with_lm_studio(
+                    stripped_question,
+                    persona_override=response_persona,
+                    language_override=turn_language
+                )
                 
-                # Send response
-                await websocket.send(json.dumps({
+                # Get UI config for response persona
+                ui_config = get_persona_ui_config(response_persona) if TTS_ROUTER_AVAILABLE else {}
+                
+                # Send response with persona metadata
+                response_message = {
                     'type': 'response',
                     'text': reply,
-                    'thinking': False
-                }))
+                    'persona': response_persona,
+                    'thinking': False,
+                    'ui': ui_config
+                }
                 
-                # Generate voice (offline TTS if enabled, otherwise ElevenLabs)
-                if offline_tts_enabled:
+                # Generate voice using TTS router if available
+                if TTS_ROUTER_AVAILABLE:
+                    tts_result = await speak_for_persona_async(reply, response_persona, turn_language)
+                    if tts_result.get('success'):
+                        response_message['voice'] = {
+                            'audio_path': tts_result['audio_path'],
+                            'backend': tts_result['backend'],
+                            'voice_id': tts_result.get('voice_id', ''),
+                            'lang': turn_language
+                        }
+                elif offline_tts_enabled:
+                    # Fallback to offline TTS
                     tts_result = await speak_async(reply)
                     if tts_result.get('success'):
                         audio_path = Path(tts_result['audio_path'])
-                        # Send audio file path for browser to fetch
-                        await websocket.send(json.dumps({
-                            'type': 'audio',
-                            'path': f'/tts/{audio_path.name}'
-                        }))
+                        response_message['voice'] = {
+                            'audio_path': f'/tts/{audio_path.name}',
+                            'backend': tts_result.get('backend', 'offline'),
+                            'voice_id': '',
+                            'lang': turn_language
+                        }
                 else:
+                    # Use ElevenLabs if configured
                     audio_path = generate_voice(reply)
                     if audio_path:
                         play_audio(audio_path)
                 
+                await websocket.send(json.dumps(response_message))
                 cleanup_old_files()
+            
+            elif data['type'] == 'command':
+                # Handle explicit personality switch commands
+                if data.get('command') == 'set_personality':
+                    new_personality = data.get('value')
+                    if normalize_persona(new_personality):
+                        current_personality = new_personality
+                        print(f"🔄 Personality switched to: {current_personality}")
                 
     except Exception as e:
         print(f"❌ Avatar disconnected: {e}")
@@ -469,7 +539,7 @@ async def start_websocket_server():
     )
     
     print(f"🌐 WebSocket server started on ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}")
-    print(f"💜 Open joi_avatar.html in your browser!")
+    print(f"💜 Open static/nova_avatar.html in your browser!")
     print(f"\n   Personality: {PERSONALITIES[current_personality]['name']}")
     print(f"   Language: {current_language}")
     print(f"   NIC: {'Enabled' if NIC_ENABLED else 'Disabled'}")
@@ -512,7 +582,7 @@ def console_mode():
     print(f"   Language: {current_language.upper()}")
     print(f"   NIC: {'Enabled' if NIC_ENABLED else 'Disabled'}")
     print(f"   OBD: {'Connected' if obd_monitor.connected else 'Not Connected'}")
-    print("\nCommands: /es, /en, /joi, /aria, /status, /state, /setstate [STATE], /clearstate, exit\n")
+    print("\nCommands: /es, /en, /nova, /aria, /status, /state, /setstate [STATE], /clearstate, exit\n")
     
     # Greeting
     greeting = get_greeting(current_personality)
@@ -545,9 +615,9 @@ def console_mode():
                 current_language = "en"
                 print("🔄 Switched to English\n")
                 continue
-            elif user_input.lower() == "/joi":
-                current_personality = "joi"
-                print("💜 Switched to JOI personality\n")
+            elif user_input.lower() == "/nova":
+                current_personality = "nova"
+                print("💜 Switched to Nova personality\n")
                 continue
             elif user_input.lower() == "/aria":
                 current_personality = "aria"
@@ -604,11 +674,25 @@ def console_mode():
                         time.sleep(3)  # Wait for audio to finish
                 break
 
+            # Detect per-turn persona addressing and language
+            target_persona, stripped_input = detect_target_personality(user_input)
+            turn_language = detect_language(user_input)
+            
+            # Determine which persona to use for this response
+            response_persona = target_persona if target_persona else current_personality
+            
+            if target_persona:
+                print(f"   (Routing to {target_persona} for this turn)")
+            
             # Get response
-            reply = chat_with_lm_studio(user_input)
+            reply = chat_with_lm_studio(
+                stripped_input,
+                persona_override=response_persona,
+                language_override=turn_language
+            )
             
             # Print response
-            persona_name = PERSONALITIES[current_personality]['name']
+            persona_name = PERSONALITIES[response_persona]['name']
             print(f"\n💜 {persona_name}: {reply}\n")
             
             # Generate voice (offline or ElevenLabs)
@@ -640,7 +724,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ARIA/JOI - GTI AI Copilot")
     parser.add_argument('--mode', choices=['console', 'avatar'], default='console',
                        help='Run in console or avatar mode')
-    parser.add_argument('--personality', choices=['aria', 'joi'], default='joi',
+    parser.add_argument('--personality', choices=['aria', 'nova'], default='nova',
                        help='Choose personality')
     parser.add_argument('--language', choices=['en', 'es'], default='en',
                        help='Choose language')
@@ -651,7 +735,7 @@ if __name__ == "__main__":
     current_language = args.language
     
     print("=" * 60)
-    print("  ARIA/JOI - GTI AI Copilot")
+    print("  ARIA/Nova - GTI AI Copilot")
     print("=" * 60)
     
     if args.mode == 'console':
