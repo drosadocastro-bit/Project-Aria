@@ -46,7 +46,39 @@ WEBSOCKET_PORT = 5001
 
 # ========== LANGUAGE & PERSONALITY ==========
 DEFAULT_LANGUAGE = "en"  # "en" or "es"
-DEFAULT_PERSONALITY = "joi"  # "joi" or "aria"
+DEFAULT_PERSONALITY = "nova"  # "nova" or "aria"
+
+# ========== PERSONA VOICE MAPPING ==========
+# Map persona + language to voice IDs and backends
+# For ElevenLabs: Set voice_id to your ElevenLabs voice ID
+# For offline TTS: Leave empty, backend will use default voices
+# Environment variables:
+#   NOVA_TTS_BACKEND: "auto" (default), "elevenlabs", "coqui", or "pyttsx3"
+#   NOVA_STT_BACKEND: "auto" (default), "elevenlabs", "whisper_cpp", or "mock"
+
+PERSONA_VOICE_MAP = {
+    "aria": {
+        "en": "",  # ElevenLabs voice ID for Aria (English) - leave empty for offline TTS
+        "es": ""   # ElevenLabs voice ID for Aria (Spanish) - leave empty for offline TTS
+    },
+    "nova": {
+        "en": "",  # ElevenLabs voice ID for Nova (English) - leave empty for offline TTS
+        "es": ""   # ElevenLabs voice ID for Nova (Spanish) - leave empty for offline TTS
+    }
+}
+
+# Example configuration with ElevenLabs:
+# PERSONA_VOICE_MAP = {
+#     "aria": {
+#         "en": "EXAMPLEvoiceID123",  # Your ElevenLabs voice for Aria English
+#         "es": "EXAMPLEvoiceID456"   # Your ElevenLabs voice for Aria Spanish
+#     },
+#     "nova": {
+#         "en": "v8DWAeuEGQSfwxqdH9t2",  # Your ElevenLabs voice for Nova English
+#         "es": "EXAMPLEvoiceID789"      # Your ElevenLabs voice for Nova Spanish
+#     }
+# }
+
 
 # ========== AUDIO (Windows) ==========
 FFPLAY_PATH = "C:\\Project_Aria\\ffmpeg\\bin\\ffplay.exe"  # Update to your ffplay path
