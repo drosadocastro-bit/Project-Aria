@@ -11,6 +11,24 @@ import sys
 import os
 from pathlib import Path
 
+# Optional imports are initialized to avoid "possibly unbound" warnings
+web = None
+try:
+    from aiohttp import web as aiohttp_web
+    web = aiohttp_web
+except ImportError:
+    web = None
+nova_text_handler = None
+transcribe = None
+initialize_tts = None
+get_tts_info = None
+speak = None
+speak_async = None
+initialize_stt = None
+get_stt_info = None
+speak_for_persona_async = None
+get_persona_ui_config = None
+
 # Import local modules
 from config import *
 from core.personality import *
@@ -52,10 +70,11 @@ if offline_stt_enabled:
 if NIC_ENABLED:
     sys.path.append(NIC_PATH)
     try:
-        from backend import nova_text_handler
+        from backend import nova_text_handler  # type: ignore
         print("✅ NIC integration enabled")
     except Exception as e:
         print(f"⚠️ NIC import failed: {e}")
+        nova_text_handler = None
         NIC_ENABLED = False
 
 # ========== STATE ==========
@@ -73,7 +92,7 @@ response_validator = create_response_validator(config_module)
 
 def query_nic_for_context(user_message):
     """Query NIC for manual information (if enabled)."""
-    if not NIC_ENABLED:
+    if not NIC_ENABLED or not nova_text_handler:
         return None
     
     try:
@@ -226,10 +245,11 @@ CRITICAL: Vehicle is in DRIVING mode. Your responses MUST be:
 
 async def handle_stt_upload(request):
     """Handle /stt POST endpoint for audio transcription."""
-    try:
-        from aiohttp import web
-    except ImportError:
-        return web.Response(text='{"error": "aiohttp not installed"}', status=500)
+    if web is None:
+        # Cannot use web.json_response if web is None
+        raise RuntimeError('aiohttp not installed')
+    
+    # web is available
     
     if not offline_stt_enabled:
         return web.json_response({
@@ -242,6 +262,7 @@ async def handle_stt_upload(request):
         reader = await request.multipart()
         
         audio_data = None
+        audio_path = None
         language = "en"
         
         async for field in reader:
@@ -255,17 +276,22 @@ async def handle_stt_upload(request):
             elif field.name == 'language':
                 language = (await field.read()).decode('utf-8')
         
-        if not audio_data:
+        if not audio_data or not audio_path:
             return web.json_response({
                 'success': False,
                 'error': 'No audio file provided'
             }, status=400)
         
+        if not transcribe:
+            return web.json_response({
+                'success': False,
+                'error': 'Offline STT not enabled'
+            }, status=503)
+        
         # Transcribe using offline STT
         result = transcribe(audio_path, language=language)
         
         # Clean up temp file
-        import os
         try:
             os.unlink(audio_path)
         except OSError:
@@ -282,10 +308,8 @@ async def handle_stt_upload(request):
 
 async def handle_static_tts(request):
     """Serve static TTS audio files from static/tts/."""
-    try:
-        from aiohttp import web
-    except ImportError:
-        return web.Response(text='aiohttp not installed', status=500)
+    if web is None:
+        raise RuntimeError('aiohttp not installed')
     
     filename = request.match_info.get('filename', '')
     
@@ -304,9 +328,7 @@ async def handle_static_tts(request):
 
 async def create_http_server():
     """Create HTTP server for STT endpoint and static files."""
-    try:
-        from aiohttp import web
-    except ImportError:
+    if web is None:
         print("⚠️ aiohttp not installed. HTTP endpoints disabled.")
         print("   Install: pip install aiohttp")
         return None
@@ -317,8 +339,38 @@ async def create_http_server():
     app.router.add_post('/stt', handle_stt_upload)
     app.router.add_get('/tts/{filename}', handle_static_tts)
     
+    # Serve static HTML files (avatar UI)
+    async def serve_avatar(request):
+        """Serve the nova_avatar.html file."""
+        if web is None:
+            raise RuntimeError('aiohttp not installed')
+        static_dir = Path(__file__).parent / "static"
+        file_path = static_dir / "nova_avatar.html"
+        if file_path.exists():
+            return web.FileResponse(file_path)
+        return web.Response(text='Avatar HTML not found', status=404)
+    
+    async def serve_static_file(request):
+        """Serve files from static/ directory."""
+        if web is None:
+            raise RuntimeError('aiohttp not installed')
+        filename = request.match_info.get('filename', '')
+        if '..' in filename:
+            return web.Response(text='Invalid path', status=400)
+        static_dir = Path(__file__).parent / "static"
+        file_path = static_dir / filename
+        if file_path.exists() and file_path.is_file():
+            return web.FileResponse(file_path)
+        return web.Response(text='File not found', status=404)
+    
+    app.router.add_get('/', serve_avatar)
+    app.router.add_get('/avatar', serve_avatar)
+    app.router.add_get('/static/{filename:.*}', serve_static_file)
+    
     # Add health check endpoint
     async def health_check(request):
+        if web is None:
+            raise RuntimeError('aiohttp not installed')
         status = {
             'status': 'ok',
             'offline_tts_enabled': offline_tts_enabled,
@@ -328,9 +380,11 @@ async def create_http_server():
         }
         
         if offline_tts_enabled:
-            status['tts_backend'] = get_tts_info()
+            if get_tts_info:
+                status['tts_backend'] = get_tts_info()
         if offline_stt_enabled:
-            status['stt_backend'] = get_stt_info()
+            if get_stt_info:
+                status['stt_backend'] = get_stt_info()
         
         return web.json_response(status)
     
@@ -340,7 +394,7 @@ async def create_http_server():
 
 # ========== WEBSOCKET SERVER (For Avatar) ==========
 
-async def handle_websocket(websocket, path):
+async def handle_websocket(websocket):
     """Handle WebSocket connections from browser avatar."""
     try:
         import websockets
@@ -355,7 +409,7 @@ async def handle_websocket(websocket, path):
     
     # Send greeting
     greeting = get_greeting(current_personality)
-    ui_config = get_persona_ui_config(current_personality) if TTS_ROUTER_AVAILABLE else {}
+    ui_config = get_persona_ui_config(current_personality) if TTS_ROUTER_AVAILABLE and get_persona_ui_config else {}
     
     await websocket.send(json.dumps({
         'type': 'greeting',
@@ -400,7 +454,7 @@ async def handle_websocket(websocket, path):
                 )
                 
                 # Get UI config for response persona
-                ui_config = get_persona_ui_config(response_persona) if TTS_ROUTER_AVAILABLE else {}
+                ui_config = get_persona_ui_config(response_persona) if TTS_ROUTER_AVAILABLE and get_persona_ui_config else {}
                 
                 # Send response with persona metadata
                 response_message = {
@@ -412,7 +466,7 @@ async def handle_websocket(websocket, path):
                 }
                 
                 # Generate voice using TTS router if available
-                if TTS_ROUTER_AVAILABLE:
+                if TTS_ROUTER_AVAILABLE and speak_for_persona_async:
                     tts_result = await speak_for_persona_async(reply, response_persona, turn_language)
                     if tts_result.get('success'):
                         response_message['voice'] = {
@@ -421,7 +475,7 @@ async def handle_websocket(websocket, path):
                             'voice_id': tts_result.get('voice_id', ''),
                             'lang': turn_language
                         }
-                elif offline_tts_enabled:
+                elif offline_tts_enabled and speak_async:
                     # Fallback to offline TTS
                     tts_result = await speak_async(reply)
                     if tts_result.get('success'):
@@ -487,16 +541,22 @@ async def start_websocket_server():
     if offline_tts_enabled:
         from core.offline_tts import initialize_tts
         if initialize_tts():
-            info = get_tts_info()
-            print(f"✅ Offline TTS initialized: {info['backend']}")
+            if get_tts_info:
+                info = get_tts_info()
+                print(f"✅ Offline TTS initialized: {info['backend']}")
+            else:
+                print("✅ Offline TTS initialized")
         else:
             print("⚠️ Offline TTS initialization failed")
     
     if offline_stt_enabled:
         from core.offline_stt import initialize_stt
         if initialize_stt():
-            info = get_stt_info()
-            print(f"✅ Offline STT initialized: {info['backend']}")
+            if get_stt_info:
+                info = get_stt_info()
+                print(f"✅ Offline STT initialized: {info['backend']}")
+            else:
+                print("✅ Offline STT initialized")
         else:
             print("⚠️ Offline STT initialization failed")
     
@@ -592,9 +652,10 @@ def console_mode():
     if offline_tts_enabled:
         from core.offline_tts import initialize_tts
         if initialize_tts():
-            result = speak(greeting)
-            if result.get('success'):
-                print(f"   (TTS: {result['backend']})")
+            if speak:
+                result = speak(greeting)
+                if result.get('success'):
+                    print(f"   (TTS: {result['backend']})")
     elif USE_ELEVENLABS:
         audio = generate_voice(greeting)
         if audio:
@@ -660,8 +721,7 @@ def console_mode():
                 print(f"\n💜 {PERSONALITIES[current_personality]['name']}: {goodbye}\n")
                 
                 # Generate goodbye voice
-                if offline_tts_enabled:
-                    from core.offline_tts import speak
+                if offline_tts_enabled and speak:
                     result = speak(goodbye)
                     if result.get('success'):
                         import time
@@ -696,8 +756,7 @@ def console_mode():
             print(f"\n💜 {persona_name}: {reply}\n")
             
             # Generate voice (offline or ElevenLabs)
-            if offline_tts_enabled:
-                from core.offline_tts import speak
+            if offline_tts_enabled and speak:
                 result = speak(reply)
                 if result.get('success'):
                     # In console mode, audio is generated but not played
