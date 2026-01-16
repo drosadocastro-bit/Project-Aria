@@ -21,6 +21,7 @@ GENRE_MAPPING_FILE = CONFIG_PATH / "genre_eq_mapping.json"
 
 # ML Genre Classifier (lazy import to avoid circular deps)
 _ml_classifier = None
+_metadata_classifier = None
 
 # Cached JSON mappings (loaded once)
 _genre_eq_map_cache = None
@@ -56,13 +57,32 @@ def get_ml_classifier():
     global _ml_classifier
     if _ml_classifier is None:
         try:
-            from .genre_classifier import GenreClassifier
             _ml_classifier = GenreClassifier()
             if not _ml_classifier.is_trained:
                 print("⚠️ ML classifier not trained. Run: python -m core.genre_classifier")
         except ImportError as e:
             print(f"⚠️ ML classifier unavailable: {e}")
     return _ml_classifier
+
+
+def get_metadata_classifier():
+    """Get or create metadata→preset classifier instance."""
+    global _metadata_classifier
+    if _metadata_classifier is None:
+        try:
+            _metadata_classifier = GenreClassifier(model_name="genre_metadata_classifier")
+            if not _metadata_classifier.is_trained:
+                print("⚠️ Metadata preset classifier not trained. Run: python -m core.genre_classifier --train-metadata")
+        except ImportError as e:
+            print(f"⚠️ Metadata classifier unavailable: {e}")
+    return _metadata_classifier
+
+
+def train_metadata_preset_classifier():
+    """Helper to train metadata→preset classifier and report accuracy."""
+    clf = GenreClassifier(model_name="genre_metadata_classifier")
+    acc = clf.train_from_metadata()
+    print(f"Metadata preset classifier accuracy: {acc:.1%}")
 
 
 # ========== EQ PRESETS ==========
