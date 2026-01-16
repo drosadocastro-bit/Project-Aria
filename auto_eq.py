@@ -23,18 +23,41 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core.audio_intelligence import (
-    GenreEQMapper, 
-    EQ_PRESETS, 
+    GenreEQMapper,
+    EQ_PRESETS,
     apply_eq_to_apo,
     format_eq_for_dsp,
     GENRE_EQ_MAP,
     GTZAN_TO_EQ,
     get_ml_classifier,
+    get_metadata_classifier,
     get_genre_eq_map,
-    get_gtzan_to_eq
+    get_gtzan_to_eq,
 )
 from core.voice import generate_voice, play_audio
-from config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, USE_ELEVENLABS
+from core.listener_profile import ListenerProfile
+from core.active_learning import ActiveLearningMonitor
+from config import (
+    SPOTIFY_CLIENT_ID,
+    SPOTIFY_CLIENT_SECRET,
+    SPOTIFY_REDIRECT_URI,
+    USE_ELEVENLABS,
+    DSP_HARDWARE_PROFILE,
+    DSP_GAIN_OFFSET_DB,
+    DSP_SUB_TRIM_DB,
+    DSP_RPM_DUCKING_ENABLED,
+    DSP_RPM_DUCKING_THRESHOLD,
+    DSP_RPM_DUCKING_DEPTH_DB,
+    EQ_CONFIDENCE_FLOOR,
+    EQ_FALLBACK_PRESET,
+    EQ_BLEND_MIN_PROB,
+    EQ_BLEND_MAX_GAP,
+)
+
+try:
+    from core.obd_integration import obd_monitor
+except Exception:
+    obd_monitor = None
 
 # Token storage
 TOKEN_FILE = Path(__file__).parent / "state" / "spotify_token.json"
@@ -45,8 +68,12 @@ ML_PREDICTIONS_FILE = Path(__file__).parent / "state" / "ml_predictions.csv"
 # ML Classification cache (avoid re-classifying same track)
 _ml_cache = {}
 
+# User preference learning
+listener_profile = ListenerProfile()
+active_monitor = ActiveLearningMonitor(listener_profile)
+
 # Model versioning for future confidence decay
-MODEL_VERSION = "GTZAN_RF_v1.0"
+MODEL_VERSION = "GTZAN_RF_v1.1"
 
 # Cache limits
 ML_CACHE_MAX_ENTRIES = 10000
@@ -84,7 +111,17 @@ def load_ml_predictions_cache():
     return loaded
 
 
-def save_ml_prediction(track_id, track_name, artist, genre, preset, confidence, top_3, source="ml"):
+def save_ml_prediction(
+    track_id,
+    track_name,
+    artist,
+    genre,
+    preset,
+    confidence,
+    top_3,
+    source="ml",
+    model_version=None,
+):
     """Persist a single ML prediction to CSV for audit trail & offline use."""
     try:
         file_exists = ML_PREDICTIONS_FILE.exists()
@@ -108,7 +145,7 @@ def save_ml_prediction(track_id, track_name, artist, genre, preset, confidence, 
                 str(top_3) if top_3 else "",
                 source,
                 datetime.now().isoformat(),
-                MODEL_VERSION
+                model_version or MODEL_VERSION,
             ])
     except Exception as e:
         print(f"⚠️ Failed to save ML prediction: {e}")
@@ -523,6 +560,7 @@ def get_current_track(oauth):
                 "artist_id": artist_id,
                 "album": data["item"]["album"]["name"],
                 "is_playing": data.get("is_playing", False),
+                "popularity": data["item"].get("popularity", 0),
                 "spotify_genres": spotify_genres,  # Artist genres from Spotify
                 "preview_url": data["item"].get("preview_url")  # 30-sec MP3 preview for ML
             }
@@ -567,6 +605,103 @@ def genres_to_eq_preset(genres):
     return "v_shape", None, 0.0
 
 
+def classify_track_with_metadata(track):
+    """Predict EQ preset using metadata-only classifier (no audio required)."""
+    if not track:
+        return None, 0.0
+
+    classifier = get_metadata_classifier()
+    if classifier is None or not classifier.is_trained:
+        return None, 0.0
+
+    try:
+        popularity_value = track.get("popularity", 0)
+        preset, confidence = classifier.predict_preset_from_metadata(popularity_value)
+        if preset:
+            return preset, confidence
+    except Exception as e:
+        print(f"   ⚠️ Metadata classify failed: {e}")
+
+    return None, 0.0
+
+
+def apply_preference_boost(genre, confidence):
+    """
+    Boost or penalize confidence based on listener's genre preferences.
+    
+    Returns: (adjusted_confidence, boost_explanation)
+    """
+    if not listener_profile or not genre:
+        return confidence, ""
+    
+    affinity = listener_profile.get_genre_affinity(genre)
+    skip_rate = listener_profile.get_skip_rate_for_genre(genre)
+    
+    # Boost factor based on affinity
+    if affinity >= 0.80:
+        boost = +0.15
+        reason = f"High affinity ({affinity:.0%})"
+    elif affinity >= 0.65:
+        boost = +0.08
+        reason = f"Good affinity ({affinity:.0%})"
+    elif affinity <= 0.30:
+        boost = -0.15
+        reason = f"Low affinity ({affinity:.0%})"
+    elif affinity <= 0.45:
+        boost = -0.08
+        reason = f"Poor affinity ({affinity:.0%})"
+    else:
+        boost = 0.0
+        reason = ""
+    
+    # Extra penalty if skip rate is high
+    if skip_rate > 0.5:
+        boost -= 0.10
+        reason += f" | High skip rate ({skip_rate:.0%})"
+    
+    adjusted = max(0.0, min(1.0, confidence + boost))
+    return adjusted, reason
+
+
+def blend_eq_presets(top_3, gtzan_map, min_prob=0.35, max_gap=0.12):
+    """
+    Blend two EQ presets when ML top-2 genres are close.
+
+    Returns: (label, blended_bands, reason) or (None, None, None)
+    """
+    if not top_3 or len(top_3) < 2:
+        return None, None, None
+
+    (genre_1, prob_1), (genre_2, prob_2) = top_3[:2]
+
+    if prob_1 < min_prob:
+        return None, None, None
+    if (prob_1 - prob_2) > max_gap:
+        return None, None, None
+
+    preset_1 = gtzan_map.get(genre_1)
+    preset_2 = gtzan_map.get(genre_2)
+    if not preset_1 or not preset_2 or preset_1 == preset_2:
+        return None, None, None
+
+    bands_1 = EQ_PRESETS.get(preset_1)
+    bands_2 = EQ_PRESETS.get(preset_2)
+    if not bands_1 or not bands_2:
+        return None, None, None
+
+    weight_1 = prob_1 / (prob_1 + prob_2)
+    weight_2 = 1.0 - weight_1
+
+    blended_bands = [
+        (b1 * weight_1) + (b2 * weight_2)
+        for b1, b2 in zip(bands_1, bands_2)
+    ]
+
+    label = f"blend({preset_1}+{preset_2})"
+    reason = f"{genre_1}:{prob_1:.0%} + {genre_2}:{prob_2:.0%}"
+    return label, blended_bands, reason
+
+
 def classify_track_with_ml(track_id, preview_url, track_name=None, artist=None):
     """
     Use ML classifier to detect genre from Spotify's 30-second preview.
@@ -590,6 +725,7 @@ def classify_track_with_ml(track_id, preview_url, track_name=None, artist=None):
     classifier = get_ml_classifier()
     if classifier is None or not classifier.is_trained:
         return None, None, 0.0
+    model_version = getattr(classifier, "model_version", MODEL_VERSION)
     
     # Use dynamic GTZAN mapping (prefers JSON config)
     gtzan_map = get_gtzan_to_eq()
@@ -637,7 +773,8 @@ def classify_track_with_ml(track_id, preview_url, track_name=None, artist=None):
                     preset=preset,
                     confidence=confidence,
                     top_3=top_3,
-                    source="ml"
+                    source="ml",
+                    model_version=model_version,
                 )
                 
                 print(f"   🤖 ML: Detected {ml_genre} ({confidence:.0%}) → {preset}")
@@ -657,6 +794,65 @@ def classify_track_with_ml(track_id, preview_url, track_name=None, artist=None):
     return None, None, 0.0
 
 
+_rpm_ducking_warned = False
+
+def read_rpm_for_ducking():
+    """Best-effort RPM read for sub ducking; silent if unavailable."""
+    global _rpm_ducking_warned
+    if not DSP_RPM_DUCKING_ENABLED:
+        return None
+    try:
+        if obd_monitor and getattr(obd_monitor, "connected", False):
+            data = obd_monitor.get_live_data()
+            if data and data.get("rpm") is not None:
+                return data.get("rpm")
+    except Exception as e:
+        # Warn once to avoid log spam
+        if not _rpm_ducking_warned:
+            print(f"⚠️ RPM ducking unavailable: {e}")
+            _rpm_ducking_warned = True
+    return None
+
+
+def shape_eq_for_hardware(eq_bands, rpm=None):
+    """Apply hardware gain offsets, sub trim, and RPM ducking."""
+    bands = list(eq_bands)
+    notes = []
+    if DSP_GAIN_OFFSET_DB != 0:
+        bands = [g + DSP_GAIN_OFFSET_DB for g in bands]
+        notes.append(f"gain {DSP_GAIN_OFFSET_DB:+.1f}dB")
+
+    if DSP_SUB_TRIM_DB != 0:
+        for idx in (0, 1):  # 31Hz, 62Hz
+            bands[idx] += DSP_SUB_TRIM_DB
+        notes.append(f"sub {DSP_SUB_TRIM_DB:+.1f}dB")
+
+    if (
+        DSP_RPM_DUCKING_ENABLED
+        and rpm is not None
+        and rpm >= DSP_RPM_DUCKING_THRESHOLD
+        and DSP_RPM_DUCKING_DEPTH_DB != 0
+    ):
+        for idx in (0, 1):
+            bands[idx] += DSP_RPM_DUCKING_DEPTH_DB
+        notes.append(
+            f"rpm>{DSP_RPM_DUCKING_THRESHOLD}→{DSP_RPM_DUCKING_DEPTH_DB:+.1f}dB"
+        )
+
+    return bands, notes
+
+
+def enforce_confidence_floor(preset_name, confidence):
+    """Fallback to balanced preset if confidence is too low."""
+    fallback = EQ_FALLBACK_PRESET if EQ_FALLBACK_PRESET in EQ_PRESETS else "v_shape"
+    if confidence < EQ_CONFIDENCE_FLOOR:
+        print(
+            f"   ⚠️ Confidence {confidence:.0%} below floor {EQ_CONFIDENCE_FLOOR:.0%}; using {fallback}"
+        )
+        return fallback, True
+    return preset_name, False
+
+
 def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=False, ml_enabled=True):
     """Main loop - poll Spotify and auto-adjust EQ."""
     print("\n" + "=" * 60)
@@ -669,9 +865,11 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
     
     last_track_id = None
     current_preset = "flat"
+    current_bands = EQ_PRESETS["flat"]
     last_voice_time = 0
     VOICE_COOLDOWN = 60 if driving_mode else 5  # Rate limit: 60s driving, 5s parked
     MIN_CONFIDENCE = 0.80  # Don't announce if confidence below this
+    last_rpm_ducked = False
     
     # Voice phrases - driving mode uses ultra-short
     eq_phrases_driving = {
@@ -746,6 +944,7 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
     
     while True:
         try:
+            rpm_value = read_rpm_for_ducking()
             track = get_current_track(oauth)
             
             if track and track.get("is_playing"):
@@ -753,11 +952,14 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
                 
                 # Only update if track changed
                 if track_id != last_track_id:
+                    if last_track_id is not None:
+                        active_monitor.on_track_ended(action="normal")
                     last_track_id = track_id
                     
                     # Get genres from Spotify API (artist genres)
                     spotify_genres = track.get("spotify_genres", [])
                     source = "spotify"
+                    custom_bands = None
                     
                     # First try: Spotify artist genres
                     new_preset, matched_genre, confidence = genres_to_eq_preset(spotify_genres)
@@ -775,8 +977,43 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
                             confidence = result.get("confidence", 0.0)
                             genres = result.get("genres", [])
                             source = "database"
+
+                    # Fallback 2: metadata-based preset classifier (no audio needed)
+                    if confidence == 0.0:
+                        metadata_classifier = get_metadata_classifier()
+                        meta_preset, meta_confidence = classify_track_with_metadata(track)
+                        if meta_preset:
+                            new_preset = meta_preset
+                            matched_genre = "metadata_popularity"
+                            confidence = meta_confidence
+                            source = "metadata_classifier"
+                            model_version = (
+                                getattr(metadata_classifier, "model_version", MODEL_VERSION)
+                                if metadata_classifier
+                                else MODEL_VERSION
+                            )
+
+                            # Persist lightweight prediction for audit/cache
+                            _ml_cache[track_id] = {
+                                "preset": meta_preset,
+                                "genre": "metadata",
+                                "confidence": meta_confidence,
+                                "top_3": [],
+                                "source": "metadata",
+                            }
+                            save_ml_prediction(
+                                track_id=track_id,
+                                track_name=track.get("track_name"),
+                                artist=track.get("artist"),
+                                genre="metadata",
+                                preset=meta_preset,
+                                confidence=meta_confidence,
+                                top_3=[],
+                                source="metadata",
+                                model_version=model_version,
+                            )
                     
-                    # Fallback 2: ML classification from audio preview
+                    # Fallback 3: ML classification from audio preview
                     if confidence == 0.0 and ml_enabled:
                         preview_url = track.get("preview_url")
                         ml_preset, ml_genre, ml_confidence = classify_track_with_ml(
@@ -790,16 +1027,84 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
                             confidence = ml_confidence
                             genres = [ml_genre]
                             source = "ml_classifier"
+                            
+                            # LAYER 2: Apply adaptive preference boosting
+                            adjusted_confidence, boost_reason = apply_preference_boost(ml_genre, confidence)
+                            if boost_reason:
+                                print(f"   📈 Preference boost: {confidence:.0%} → {adjusted_confidence:.0%} ({boost_reason})")
+                                confidence = adjusted_confidence
+
+                            # Mixed-genre handling: blend EQ when top-2 are close
+                            top_3 = _ml_cache.get(track_id, {}).get("top_3", [])
+                            gtzan_map = get_gtzan_to_eq()
+                            blend_label, blended_bands, blend_reason = blend_eq_presets(
+                                top_3,
+                                gtzan_map,
+                                min_prob=EQ_BLEND_MIN_PROB,
+                                max_gap=EQ_BLEND_MAX_GAP,
+                            )
+                            if blended_bands:
+                                new_preset = blend_label
+                                custom_bands = blended_bands
+                                if len(top_3) >= 2:
+                                    genres = [top_3[0][0], top_3[1][0]]
+                                    matched_genre = f"ML:blend({genres[0]}+{genres[1]})"
+                                source = "ml_blend"
+                                print(f"   🎚️ Blend EQ: {blend_label} ({blend_reason})")
+
+                    # Confidence guard → balanced fallback
+                    new_preset, forced_fallback = enforce_confidence_floor(new_preset, confidence)
+                    if forced_fallback:
+                        source = "confidence_guard"
+                        matched_genre = matched_genre or "low_confidence"
+                        custom_bands = None
                     
+                    # Resolve predicted genre for learning/logging
+                    if genres:
+                        predicted_genre = str(genres[0])
+                    else:
+                        predicted_genre = matched_genre or "unknown"
+                    if predicted_genre.startswith("ML:"):
+                        predicted_genre = predicted_genre[3:]
+                    if predicted_genre.startswith("metadata_"):
+                        predicted_genre = "metadata"
+
+                    active_monitor.on_track_started(track_id, predicted_genre)
+
                     # Logging - truthful about intent
                     print(f"\n🎵 Now Playing: {track['track_name']} - {track['artist']}")
                     if genres:
                         print(f"   🏷️ Genres: {', '.join(str(g) for g in genres[:5] if g)} (source: {source})")
                     
-                    # Apply EQ if preset changed
-                    if new_preset != current_preset:
-                        apply_eq_to_apo(EQ_PRESETS[new_preset], new_preset)
+                    ducking_now = (
+                        DSP_RPM_DUCKING_ENABLED
+                        and rpm_value is not None
+                        and rpm_value >= DSP_RPM_DUCKING_THRESHOLD
+                    )
+                    if not new_preset:
+                        new_preset = EQ_FALLBACK_PRESET if EQ_FALLBACK_PRESET in EQ_PRESETS else "v_shape"
+                    base_bands = custom_bands if custom_bands else EQ_PRESETS[new_preset]
+                    shaped_bands, shape_notes = shape_eq_for_hardware(
+                        base_bands, rpm=rpm_value
+                    )
+
+                    # Apply EQ if preset changed or ducking state changed
+                    if new_preset != current_preset or ducking_now != last_rpm_ducked:
+                        apply_eq_to_apo(shaped_bands, f"{new_preset} | {DSP_HARDWARE_PROFILE}")
+                        current_bands = base_bands
                         
+                        # LAYER 1: Log to listener profile for learning
+                        predicted_genre = predicted_genre or "unknown"
+                        listener_profile.log_track_prediction(
+                            track_id=track_id,
+                            track_name=track["track_name"],
+                            artist=track["artist"],
+                            predicted_genre=predicted_genre,
+                            predicted_preset=new_preset,
+                            confidence=confidence,
+                            dwell_time_sec=0  # Will update on skip
+                        )
+
                         # Truthful reason logging
                         if matched_genre:
                             print(f"   🎛️ EQ applied: {new_preset}")
@@ -807,18 +1112,45 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
                         else:
                             print(f"   🎛️ EQ applied: {new_preset}")
                             print(f"   📋 Reason: no genre match → default (confidence: {confidence:.0%})")
-                        
+
+                        if shape_notes:
+                            print(f"   🔧 Hardware shaping: {', '.join(shape_notes)} [{DSP_HARDWARE_PROFILE}]")
+
                         # Voice announcement (gated)
                         speak(new_preset, confidence)
-                        
+
                         current_preset = new_preset
+                        last_rpm_ducked = ducking_now
+                    else:
+                        print(f"   🎛️ EQ: {current_preset} (unchanged)")
+
+                else:
+                    # Same track - only reapply if RPM ducking toggles state
+                    ducking_now = (
+                        DSP_RPM_DUCKING_ENABLED
+                        and rpm_value is not None
+                        and rpm_value >= DSP_RPM_DUCKING_THRESHOLD
+                    )
+                    if ducking_now != last_rpm_ducked:
+                        shaped_bands, shape_notes = shape_eq_for_hardware(
+                            current_bands, rpm=rpm_value
+                        )
+                        apply_eq_to_apo(shaped_bands, f"{current_preset} | {DSP_HARDWARE_PROFILE}")
+                        print(
+                            f"   🔄 RPM ducking {'engaged' if ducking_now else 'released'} at {rpm_value or 0:.0f} RPM"
+                        )
+                        if shape_notes:
+                            print(f"   🔧 Hardware shaping: {', '.join(shape_notes)} [{DSP_HARDWARE_PROFILE}]")
+                        last_rpm_ducked = ducking_now
                     else:
                         print(f"   🎛️ EQ: {current_preset} (unchanged)")
             
             elif track is None or not track.get("is_playing"):
                 if last_track_id is not None:
                     print("\n⏸️ Playback paused/stopped")
+                    active_monitor.on_track_ended(action="normal")
                     last_track_id = None
+                    last_rpm_ducked = False
             
             time.sleep(interval)
             
@@ -881,6 +1213,13 @@ def main():
         print(f"   Model version: {MODEL_VERSION}")
     else:
         print("⚠️ ML classifier not trained - run: python -m core.genre_classifier")
+
+    metadata_classifier = get_metadata_classifier()
+    if metadata_classifier and metadata_classifier.is_trained:
+        print(f"🧠 Metadata classifier ready (accuracy: {metadata_classifier.accuracy:.0%})")
+        print(f"   Model version: {metadata_classifier.model_version}")
+    else:
+        print("⚠️ Metadata classifier not trained - run: python -m core.genre_classifier --train-metadata")
     
     # Check auth status
     if oauth.is_authenticated():
