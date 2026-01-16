@@ -4,6 +4,9 @@ Trained on 1000 tracks (100 per genre × 10 genres) with 58 audio features
 """
 
 import os
+import sys
+import json
+import argparse
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -16,6 +19,8 @@ DATASET_PATH = Path(__file__).parent.parent / "music_dataset" / "Data"
 FEATURES_FILE = DATASET_PATH / "features_30_sec.csv"
 FEATURES_3SEC_FILE = DATASET_PATH / "features_3_sec.csv"
 MODEL_PATH = Path(__file__).parent.parent / "models"
+METADATA_FILE = Path(__file__).parent.parent / "music_dataset" / "filtered_track_metadata.csv"
+GENRE_MAPPING_FILE = Path(__file__).parent.parent / "config" / "genre_eq_mapping.json"
 
 # GTZAN genre labels (10 genres)
 GTZAN_GENRES = ['blues', 'classical', 'country', 'disco', 'hiphop', 
@@ -45,6 +50,18 @@ FEATURE_COLUMNS = [
 ]
 
 
+def _load_genre_mapping():
+    """Load genre→EQ mapping from JSON config."""
+    try:
+        if GENRE_MAPPING_FILE.exists():
+            with open(GENRE_MAPPING_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get('genre_eq_map', {})
+    except Exception as e:
+        print(f"⚠️ Failed to load genre mapping: {e}")
+    return {}
+
+
 class GenreClassifier:
     """
     ML-based genre classifier trained on GTZAN dataset.
@@ -59,6 +76,7 @@ class GenreClassifier:
         self.model_file = MODEL_PATH / f"{model_name}.pkl"
         self.is_trained = False
         self.accuracy = 0.0
+        self.model_version = "GTZAN_RF_v1.0"
         
         # Try to load pre-trained model
         if self.model_file.exists():
@@ -74,11 +92,12 @@ class GenreClassifier:
             self.scaler = data['scaler']
             self.label_encoder = data['label_encoder']
             self.accuracy = data.get('accuracy', 0.0)
+            self.model_version = data.get('model_version', self.model_version)
             self.is_trained = True
-            print(f"✅ Loaded genre classifier: {self.model_file.name} (accuracy: {self.accuracy:.1%})")
+            print(f"[OK] Loaded genre classifier: {self.model_file.name} (accuracy: {self.accuracy:.1%})")
             return True
         except Exception as e:
-            print(f"❌ Failed to load model: {e}")
+            print(f"[ERROR] Failed to load model: {e}")
             return False
     
     def _save_model(self):
@@ -90,6 +109,7 @@ class GenreClassifier:
             'scaler': self.scaler,
             'label_encoder': self.label_encoder,
             'accuracy': self.accuracy,
+            'model_version': self.model_version,
             'feature_columns': FEATURE_COLUMNS,
             'genres': GTZAN_GENRES
         }
@@ -97,15 +117,16 @@ class GenreClassifier:
         with open(self.model_file, 'wb') as f:
             pickle.dump(data, f)
         
-        print(f"💾 Model saved: {self.model_file}")
+        print(f"[SAVE] Model saved: {self.model_file}")
     
-    def train(self, use_3sec_segments=True, test_size=0.2):
+    def train(self, use_3sec_segments=True, test_size=0.2, tune_hyperparams=False):
         """
         Train the genre classifier on GTZAN dataset.
         
         Args:
             use_3sec_segments: Use 3-second segments (more data) vs 30-second (less data)
             test_size: Fraction of data for testing
+            tune_hyperparams: Use GridSearchCV for hyperparameter tuning (slower but better)
         
         Returns:
             Accuracy score on test set
@@ -122,9 +143,9 @@ class GenreClassifier:
             print(f"❌ Features file not found: {features_file}")
             return 0.0
         
-        print(f"📂 Loading features from: {features_file.name}")
+        print(f"[LOAD] Loading features from: {features_file.name}")
         df = pd.read_csv(features_file)
-        print(f"   Loaded {len(df)} samples")
+        print(f"     Loaded {len(df)} samples")
         
         # Prepare features and labels
         X = df[FEATURE_COLUMNS].values
@@ -142,32 +163,77 @@ class GenreClassifier:
             X, y_encoded, test_size=test_size, random_state=42, stratify=y_encoded
         )
         
-        print(f"   Training: {len(X_train)} samples | Testing: {len(X_test)} samples")
+        print(f"     Training: {len(X_train)} samples | Testing: {len(X_test)} samples")
         
         # Scale features
         self.scaler = StandardScaler()
         X_train_scaled = self.scaler.fit_transform(X_train)
         X_test_scaled = self.scaler.transform(X_test)
         
-        # Train Random Forest
-        print("🌲 Training Random Forest classifier...")
-        self.model = RandomForestClassifier(
-            n_estimators=200,
-            max_depth=20,
-            min_samples_split=5,
-            min_samples_leaf=2,
-            n_jobs=-1,
-            random_state=42,
-            class_weight='balanced'
-        )
-        
-        self.model.fit(X_train_scaled, y_train)
+        # Hyperparameter tuning or direct training
+        if tune_hyperparams:
+            print("[TUNE] Running GridSearchCV for hyperparameter optimization...")
+            print("       (This may take several minutes)")
+            from sklearn.model_selection import GridSearchCV
+            
+            param_grid = {
+                'n_estimators': [250, 300, 350],
+                'max_depth': [20, 25, 30],
+                'min_samples_split': [3, 4, 5],
+                'min_samples_leaf': [1, 2],
+                'max_features': ['sqrt', 'log2']
+            }
+            
+            rf_base = RandomForestClassifier(
+                bootstrap=True,
+                oob_score=False,  # Disable for GridSearch
+                n_jobs=-1,
+                random_state=42,
+                class_weight='balanced'
+            )
+            
+            grid_search = GridSearchCV(
+                rf_base,
+                param_grid,
+                cv=3,
+                scoring='accuracy',
+                n_jobs=-1,
+                verbose=1
+            )
+            
+            grid_search.fit(X_train_scaled, y_train)
+            
+            print(f"\n[TUNE] Best parameters: {grid_search.best_params_}")
+            print(f"       Best CV score: {grid_search.best_score_:.1%}")
+            
+            self.model = grid_search.best_estimator_
+        else:
+            # Train Random Forest with optimized hyperparameters
+            print("[TRAIN] Training Random Forest classifier...")
+            self.model = RandomForestClassifier(
+                n_estimators=300,           # Increased from 200
+                max_depth=25,               # Increased from 20
+                min_samples_split=4,        # Reduced from 5 (more splits)
+                min_samples_leaf=1,         # Reduced from 2 (finer granularity)
+                max_features='sqrt',        # Use sqrt of features per tree
+                bootstrap=True,
+                oob_score=True,             # Out-of-bag score estimation
+                n_jobs=-1,
+                random_state=42,
+                class_weight='balanced'
+            )
+            
+            self.model.fit(X_train_scaled, y_train)
+            
+            # Report OOB score if available
+            if hasattr(self.model, 'oob_score_'):
+                print(f"     Out-of-bag score: {self.model.oob_score_:.1%}")
         
         # Evaluate
         y_pred = self.model.predict(X_test_scaled)
         self.accuracy = (y_pred == y_test).mean()
         
-        print(f"\n📊 Test Accuracy: {self.accuracy:.1%}")
+        print(f"\n[RESULT] Test Accuracy: {self.accuracy:.1%}")
         print("\n" + "=" * 50)
         print("Classification Report:")
         print("=" * 50)
@@ -184,7 +250,7 @@ class GenreClassifier:
             reverse=True
         )[:10]
         
-        print("\n🔑 Top 10 Most Important Features:")
+        print("\n[FEATURES] Top 10 Most Important Features:")
         for feat, imp in top_features:
             print(f"   {feat}: {imp:.4f}")
         
@@ -193,6 +259,98 @@ class GenreClassifier:
         # Save the model
         self._save_model()
         
+        self.model_version = "GTZAN_RF_v1.1"  # Bumped version for improved hyperparameters
+        return self.accuracy
+
+    def train_from_metadata(self, test_size=0.2, min_genre_count=20):
+        """
+        Train a lightweight genre→EQ preset classifier from metadata CSV.
+        Maps genres to EQ presets using config/genre_eq_mapping.json.
+        """
+        from sklearn.model_selection import train_test_split
+        from sklearn.preprocessing import StandardScaler, LabelEncoder
+        from sklearn.metrics import classification_report
+        from sklearn.ensemble import RandomForestClassifier
+
+        if not METADATA_FILE.exists():
+            print(f"[ERROR] Metadata file not found: {METADATA_FILE}")
+            return 0.0
+
+        print(f"[LOAD] Loading metadata from: {METADATA_FILE.name}")
+        df = pd.read_csv(METADATA_FILE)
+        if df.empty:
+            print("[ERROR] Metadata file is empty")
+            return 0.0
+
+        genre_map = _load_genre_mapping()
+        if not genre_map:
+            print("⚠️ Genre mapping missing; using raw genres")
+
+        # Expand multi-genre strings into rows
+        rows = []
+        for _, row in df.iterrows():
+            genres_field = str(row.get('genres', '') or '')
+            genres = [g.strip().lower() for g in genres_field.split(',') if g.strip()]
+            if not genres:
+                continue
+            for g in genres:
+                preset = genre_map.get(g, genre_map.get('default', 'v_shape')) if genre_map else g
+                rows.append({
+                    'track_id': row.get('track_id'),
+                    'genre': g,
+                    'preset': preset,
+                    'popularity': row.get('popularity', 0),
+                })
+
+        if not rows:
+            print("[ERROR] No genre rows to train")
+            return 0.0
+
+        meta_df = pd.DataFrame(rows)
+
+        # Filter low-sample genres
+        counts = meta_df['genre'].value_counts()
+        keep_genres = counts[counts >= min_genre_count].index.tolist()
+        filtered = meta_df[meta_df['genre'].isin(keep_genres)].copy()
+        if filtered.empty:
+            print("[ERROR] No genres meet min count threshold")
+            return 0.0
+
+        # Features: popularity only for now; future: clusters/x/y
+        X = filtered[['popularity']].fillna(0).values
+        y = filtered['preset'].values
+
+        self.label_encoder = LabelEncoder()
+        y_encoded = self.label_encoder.fit_transform(y)
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y_encoded, test_size=test_size, random_state=42, stratify=y_encoded
+        )
+
+        self.scaler = StandardScaler()
+        X_train_scaled = self.scaler.fit_transform(X_train)
+        X_test_scaled = self.scaler.transform(X_test)
+
+        self.model = RandomForestClassifier(
+            n_estimators=200,
+            max_depth=10,
+            min_samples_split=3,
+            min_samples_leaf=1,
+            n_jobs=-1,
+            random_state=42,
+            class_weight='balanced'
+        )
+
+        self.model.fit(X_train_scaled, y_train)
+        y_pred = self.model.predict(X_test_scaled)
+        self.accuracy = (y_pred == y_test).mean()
+
+        print(f"\n[RESULT] Metadata preset classifier accuracy: {self.accuracy:.1%}")
+        print(classification_report(y_test, y_pred, target_names=self.label_encoder.classes_))
+
+        self.is_trained = True
+        self.model_version = "META_PRESET_v1.0"
+        self._save_model()
         return self.accuracy
     
     def predict(self, features, return_probabilities=False):
@@ -207,7 +365,7 @@ class GenreClassifier:
             Predicted genre(s) and optionally probabilities
         """
         if not self.is_trained or self.scaler is None or self.model is None or self.label_encoder is None:
-            print("❌ Model not trained! Call train() first or load a pre-trained model.")
+            print("[ERROR] Model not trained! Call train() first or load a pre-trained model.")
             return None
         
         # Ensure 2D array
@@ -264,6 +422,30 @@ class GenreClassifier:
             'all_probabilities': all_probs
         }
 
+    def predict_preset_from_metadata(self, popularity_value):
+        """Predict EQ preset from metadata-only features (popularity)."""
+        if not self.is_trained or self.model is None or self.scaler is None or self.label_encoder is None:
+            return None, 0.0
+
+        try:
+            features = np.array([[float(popularity_value or 0.0)]])
+            features = np.nan_to_num(features, nan=0.0)
+            features_scaled = self.scaler.transform(features)
+            probs = self.model.predict_proba(features_scaled)[0]
+            idx = int(probs.argmax())
+            preset = self.label_encoder.inverse_transform([idx])[0]
+            return preset, float(probs[idx])
+        except Exception as e:
+            print(f"⚠️ Metadata predict failed: {e}")
+            return None, 0.0
+
+
+def train_metadata_classifier():
+    """CLI helper to train metadata-based preset classifier."""
+    clf = GenreClassifier(model_name="genre_metadata_classifier")
+    acc = clf.train_from_metadata()
+    print(f"Metadata classifier accuracy: {acc:.1%}")
+
 
 class LiveAudioAnalyzer:
     """
@@ -281,9 +463,9 @@ class LiveAudioAnalyzer:
         try:
             import librosa
             self._librosa_available = True
-            print("✅ Librosa available for live audio analysis")
+            print("[OK] Librosa available for live audio analysis")
         except ImportError:
-            print("⚠️ Librosa not installed. Install with: pip install librosa")
+            print("[WARN] Librosa not installed. Install with: pip install librosa")
             self._librosa_available = False
     
     def extract_features_from_audio(self, audio_data, sr=22050):
@@ -298,7 +480,7 @@ class LiveAudioAnalyzer:
             numpy array of features matching FEATURE_COLUMNS order
         """
         if not self._librosa_available:
-            print("❌ Librosa required for feature extraction")
+            print("[ERROR] Librosa required for feature extraction")
             return None
         
         import librosa
@@ -368,7 +550,7 @@ class LiveAudioAnalyzer:
             y, sr = librosa.load(filepath, duration=duration, sr=22050)
             return self.extract_features_from_audio(y, int(sr))
         except Exception as e:
-            print(f"❌ Error loading audio file: {e}")
+            print(f"[ERROR] Error loading audio file: {e}")
             return None
     
     def classify_audio(self, audio_data=None, filepath=None, sr=22050):
@@ -383,7 +565,7 @@ class LiveAudioAnalyzer:
         elif audio_data is not None:
             features = self.extract_features_from_audio(audio_data, sr)
         else:
-            print("❌ Provide audio_data or filepath")
+            print("[ERROR] Provide audio_data or filepath")
             return None
         
         if features is None:
@@ -398,23 +580,36 @@ if __name__ == "__main__":
     print("=" * 60)
     print("  GTZAN Genre Classifier - ML Training & Testing")
     print("=" * 60)
-    
+
+    parser = argparse.ArgumentParser(description="Genre classifier utilities")
+    parser.add_argument("--train", action="store_true", help="Train GTZAN audio classifier")
+    parser.add_argument("--train-metadata", action="store_true", help="Train metadata-based preset classifier")
+    parser.add_argument("--tune", action="store_true", help="Use GridSearchCV for hyperparameter tuning (slower)")
+    parser.add_argument("--test", action="store_true", help="Run sample predictions after training")
+    args = parser.parse_args()
+
+    if args.train_metadata:
+        clf = GenreClassifier(model_name="genre_metadata_classifier")
+        print("\n🎓 Training metadata-based preset classifier...")
+        acc = clf.train_from_metadata()
+        print(f"\nMetadata classifier accuracy: {acc:.1%}")
+        sys.exit(0)
+
     classifier = GenreClassifier()
-    
-    # Train if not already trained
-    if not classifier.is_trained:
+
+    # Train GTZAN model if requested or missing
+    if args.train or not classifier.is_trained:
         print("\n🎓 Training new model on GTZAN dataset...")
-        accuracy = classifier.train(use_3sec_segments=True)
+        accuracy = classifier.train(use_3sec_segments=True, tune_hyperparams=args.tune)
     else:
         print(f"\n✅ Using pre-trained model (accuracy: {classifier.accuracy:.1%})")
-    
-    # Test predictions
-    if classifier.is_trained:
+
+    # Test predictions (default behavior unless explicitly skipped via CLI logic)
+    if classifier.is_trained and (args.test or not args.train_metadata):
         print("\n" + "-" * 60)
         print("Testing predictions on sample data...")
         print("-" * 60)
         
-        # Load a few test samples
         if FEATURES_FILE.exists():
             df = pd.read_csv(FEATURES_FILE)
             
@@ -427,7 +622,7 @@ if __name__ == "__main__":
                 
                 correct = "✅" if result['genre'] == genre else "❌"
                 print(f"{correct} Actual: {genre:10} | Predicted: {result['genre']:10} ({result['confidence']:.1%})")
-    
+
     print("\n" + "=" * 60)
     print("Model ready for integration with audio_intelligence.py")
     print("=" * 60)
