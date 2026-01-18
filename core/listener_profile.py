@@ -22,6 +22,7 @@ class ListenerProfile:
         self.profile_path.parent.mkdir(parents=True, exist_ok=True)
         
         self.profile = self._load_or_init()
+        self._sanitize_profile()
     
     def _load_or_init(self):
         """Load existing profile or initialize new one."""
@@ -52,11 +53,29 @@ class ListenerProfile:
     def save(self):
         """Persist profile to disk."""
         try:
+            self._sanitize_profile()
             self.profile["last_updated"] = datetime.now().isoformat()
             with open(self.profile_path, 'w', encoding='utf-8') as f:
                 json.dump(self.profile, f, indent=2)
         except Exception as e:
             print(f"⚠️ Failed to save profile: {e}")
+
+    def _sanitize_profile(self):
+        """Clean up invalid keys and cap metadata influence."""
+        # Remove empty preset keys
+        preset_prefs = self.profile.get("preset_preferences", {})
+        if "" in preset_prefs:
+            preset_prefs.pop("", None)
+        if None in preset_prefs:
+            preset_prefs.pop(None, None)
+        self.profile["preset_preferences"] = preset_prefs
+
+        # Cap metadata affinity to avoid dominating preferences
+        genre_affinities = self.profile.get("genre_affinities", {})
+        for key in list(genre_affinities.keys()):
+            if isinstance(key, str) and key.startswith("metadata"):
+                genre_affinities[key] = min(0.6, float(genre_affinities.get(key, 0.5)))
+        self.profile["genre_affinities"] = genre_affinities
     
     def log_track_prediction(self, track_id, track_name, artist, predicted_genre, 
                             predicted_preset, confidence, dwell_time_sec=0):
@@ -81,18 +100,25 @@ class ListenerProfile:
             self.profile["skip_patterns"][predicted_genre] = \
                 self.profile["skip_patterns"].get(predicted_genre, 0) + 1
         
+        is_metadata = isinstance(predicted_genre, str) and predicted_genre.startswith("metadata")
+
         # Update genre affinity (naive: penalize skips, reward plays)
         current_affinity = self.profile["genre_affinities"].get(predicted_genre, 0.5)
         if is_skip:
-            new_affinity = max(0.0, current_affinity - 0.05)
+            delta = 0.02 if is_metadata else 0.05
+            new_affinity = max(0.0, current_affinity - delta)
         else:
-            new_affinity = min(1.0, current_affinity + 0.03)
+            delta = 0.01 if is_metadata else 0.03
+            new_affinity = min(1.0, current_affinity + delta)
+        if is_metadata:
+            new_affinity = min(0.6, new_affinity)
         self.profile["genre_affinities"][predicted_genre] = new_affinity
         
-        # Track preset preference
-        if predicted_preset not in self.profile["preset_preferences"]:
-            self.profile["preset_preferences"][predicted_preset] = []
-        self.profile["preset_preferences"][predicted_preset].append(confidence)
+        # Track preset preference (skip empty)
+        if predicted_preset:
+            if predicted_preset not in self.profile["preset_preferences"]:
+                self.profile["preset_preferences"][predicted_preset] = []
+            self.profile["preset_preferences"][predicted_preset].append(confidence)
         
         # Log for audit trail
         self.profile["feedback_log"].append({

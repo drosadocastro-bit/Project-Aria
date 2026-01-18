@@ -31,12 +31,20 @@ from core.audio_intelligence import (
     GTZAN_TO_EQ,
     get_ml_classifier,
     get_metadata_classifier,
+    get_cnn_classifier,
     get_genre_eq_map,
     get_gtzan_to_eq,
 )
 from core.voice import generate_voice, play_audio
 from core.listener_profile import ListenerProfile
 from core.active_learning import ActiveLearningMonitor
+
+# DSP Hardware Control (optional)
+try:
+    from core.dsp_controller import DSPController
+except ImportError:
+    DSPController = None
+
 from config import (
     SPOTIFY_CLIENT_ID,
     SPOTIFY_CLIENT_SECRET,
@@ -52,6 +60,15 @@ from config import (
     EQ_FALLBACK_PRESET,
     EQ_BLEND_MIN_PROB,
     EQ_BLEND_MAX_GAP,
+    USE_CNN_GENRE,
+    CNN_CONFIDENCE_FLOOR,
+    USE_HARDWARE_DSP,
+    DSP_METHOD,
+    DSP_PORT,
+    DSP_BAUDRATE,
+    DSP_PROTOCOL_FILE,
+    ADB_DEVICE,
+    DSP_PRESET_MAPPING,
 )
 
 try:
@@ -71,6 +88,23 @@ _ml_cache = {}
 # User preference learning
 listener_profile = ListenerProfile()
 active_monitor = ActiveLearningMonitor(listener_profile)
+
+# DSP Hardware Controller (B2 Audio)
+dsp_controller = None
+if USE_HARDWARE_DSP and DSPController:
+    try:
+        dsp_controller = DSPController({
+            "DSP_METHOD": DSP_METHOD,
+            "DSP_PORT": DSP_PORT,
+            "DSP_BAUDRATE": DSP_BAUDRATE,
+            "DSP_PROTOCOL_FILE": DSP_PROTOCOL_FILE,
+            "ADB_DEVICE": ADB_DEVICE,
+            "DSP_PRESET_MAPPING": DSP_PRESET_MAPPING,
+        })
+        print(f"🎛️ DSP Controller initialized ({DSP_METHOD} mode)")
+    except Exception as e:
+        print(f"⚠️ DSP Controller failed to initialize: {e}")
+        dsp_controller = None
 
 # Model versioning for future confidence decay
 MODEL_VERSION = "GTZAN_RF_v1.1"
@@ -744,41 +778,72 @@ def classify_track_with_ml(track_id, preview_url, track_name=None, artist=None):
             tmp_path = tmp.name
         
         try:
-            # Extract features and classify
+            best = None
+
+            # Extract features and classify with GTZAN RF
             from core.genre_classifier import LiveAudioAnalyzer
             analyzer = LiveAudioAnalyzer(classifier)
             result = analyzer.classify_audio(filepath=tmp_path)
-            
+
             if result and result.get("genre"):
                 ml_genre = result["genre"]
                 confidence = result["confidence"]
                 preset = gtzan_map.get(ml_genre, "v_shape")
                 top_3 = result.get("top_3", [])
-                
-                # Cache result in memory
-                _ml_cache[track_id] = {
+                best = {
                     "preset": preset,
                     "genre": ml_genre,
                     "confidence": confidence,
                     "top_3": top_3,
-                    "source": "ml"
+                    "source": "ml",
+                    "model_version": model_version,
                 }
-                
+
+            # Optional CNN inference (PyTorch) for complex/mixed tracks
+            if USE_CNN_GENRE:
+                cnn = get_cnn_classifier()
+                if cnn and cnn.is_trained:
+                    cnn_result = cnn.predict_audio(Path(tmp_path))
+                    if cnn_result and cnn_result.get("genre"):
+                        cnn_conf = cnn_result.get("confidence", 0.0)
+                        if cnn_conf >= CNN_CONFIDENCE_FLOOR and (
+                            best is None or cnn_conf > best.get("confidence", 0.0)
+                        ):
+                            cnn_genre = cnn_result["genre"]
+                            best = {
+                                "preset": gtzan_map.get(cnn_genre, "v_shape"),
+                                "genre": cnn_genre,
+                                "confidence": cnn_conf,
+                                "top_3": cnn_result.get("top_3", []),
+                                "source": "cnn",
+                                "model_version": "CNN_v1",
+                            }
+
+            if best:
+                # Cache result in memory
+                _ml_cache[track_id] = {
+                    "preset": best["preset"],
+                    "genre": best["genre"],
+                    "confidence": best["confidence"],
+                    "top_3": best["top_3"],
+                    "source": best["source"],
+                }
+
                 # Persist to CSV for offline use & audit trail
                 save_ml_prediction(
                     track_id=track_id,
                     track_name=track_name,
                     artist=artist,
-                    genre=ml_genre,
-                    preset=preset,
-                    confidence=confidence,
-                    top_3=top_3,
-                    source="ml",
-                    model_version=model_version,
+                    genre=best["genre"],
+                    preset=best["preset"],
+                    confidence=best["confidence"],
+                    top_3=best["top_3"],
+                    source=best["source"],
+                    model_version=best["model_version"],
                 )
-                
-                print(f"   🤖 ML: Detected {ml_genre} ({confidence:.0%}) → {preset}")
-                return preset, ml_genre, confidence
+
+                print(f"   🤖 ML: Detected {best['genre']} ({best['confidence']:.0%}) → {best['preset']} [{best['source']}]")
+                return best["preset"], best["genre"], best["confidence"]
         finally:
             # Cleanup temp file
             try:
@@ -1090,6 +1155,14 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
 
                     # Apply EQ if preset changed or ducking state changed
                     if new_preset != current_preset or ducking_now != last_rpm_ducked:
+                        # Hardware DSP preset switching (if enabled)
+                        if dsp_controller:
+                            try:
+                                dsp_controller.set_preset(new_preset)
+                            except Exception as e:
+                                print(f"⚠️ DSP preset switch failed: {e}")
+                        
+                        # Software EQ (Equalizer APO)
                         apply_eq_to_apo(shaped_bands, f"{new_preset} | {DSP_HARDWARE_PROFILE}")
                         current_bands = base_bands
                         
@@ -1135,6 +1208,7 @@ def auto_eq_loop(oauth, mapper, interval=3, voice_enabled=True, driving_mode=Fal
                         shaped_bands, shape_notes = shape_eq_for_hardware(
                             current_bands, rpm=rpm_value
                         )
+                        # Note: DSP preset doesn't change, only software EQ adjusts for RPM ducking
                         apply_eq_to_apo(shaped_bands, f"{current_preset} | {DSP_HARDWARE_PROFILE}")
                         print(
                             f"   🔄 RPM ducking {'engaged' if ducking_now else 'released'} at {rpm_value or 0:.0f} RPM"

@@ -1,6 +1,6 @@
 # 🚗 Project ARIA — GTI AI Copilot (Nova Edition)
 
-> **Version:** 0.8.0 (Nova Persona Routing Update)  
+> **Version:** 0.9.0 (Personalized CNN + B2 DSP Integration)  
 > **Status:** Private Development — Public Release Planned Q2 2026  
 
 **The dual-soul AI copilot for your VW GTI MK6**  
@@ -11,7 +11,7 @@ Combining holographic personality, real-time car data, and intelligent audio.
 ---
 
 ### 🔗 Quick Links
-[🎛 Audio Intelligence](#-audio-intelligence-auto-eq) • [🚗 Driving Contract](#-driving-contract) • [🧠 ML Classifier](#-ml-genre-classifier-gtzan-trained) • [🧰 Setup](#-setup) • [🌌 Personalities](#-personalities)
+[🎛 Audio Intelligence](#-audio-intelligence-auto-eq) • [🚗 Driving Contract](#-driving-contract) • [🧠 ML Classifier](#-ml-genre-classifier-gtzan-trained) • [🎙️ Personalized CNN](#-personalized-cnn-audio-classifier) • [🎛️ DSP Control](#-dsp-hardware-control-b2-audio) • [🧰 Setup](#-setup) • [🌌 Personalities](#-personalities)
 
 ---
 
@@ -23,7 +23,11 @@ Combining holographic personality, real-time car data, and intelligent audio.
 - 🧠 Local LLM via LM Studio + ElevenLabs TTS  
 - 🎙️ **Offline TTS/STT:** Coqui TTS & whisper.cpp (optional, privacy-first)  
 - 🚗 Real-time OBD-II telemetry (speed, RPM, coolant, etc.)  
-- 🎛️ Auto EQ — Spotify-aware DSP with offline ML fallback  
+- 🎛️ **Auto EQ — Spotify-aware DSP** with offline ML fallback  
+- 🧠 **Personalized CNN:** Learns your taste (330+ tracks, 77 genres, 72.5% accuracy)  
+- 📊 **Adaptive Listening Profile:** Genre affinities, skip patterns, preset preferences  
+- 🎚️ **Mixed-Genre EQ Blending:** Blends presets when genres are close  
+- 🎛️ **DSP Hardware Control:** B2 Audio preset switching via USB (reverse-engineered protocol)  
 - 📚 NIC repair-manual integration (optional)  
 - 🧩 Persistent Memory + Offline Cache System  
 - 🚦 Safety-aware Driving Contract  
@@ -102,17 +106,24 @@ Project_Aria/
 │   ├── state_manager.py           # Vehicle state detection
 │   ├── response_validator.py      # DRIVING mode response enforcement
 │   ├── audio_intelligence.py      # 🎛️ Genre→EQ mapping engine
-│   └── genre_classifier.py        # 🤖 ML genre classifier (GTZAN-trained)
+│   ├── genre_classifier.py        # 🤖 ML genre classifier (GTZAN-trained)
+│   ├── genre_cnn.py               # 🧠 CNN genre classifier (PyTorch, optional)
+│   ├── listener_profile.py        # 📊 User preference learning profile
+│   ├── active_learning.py         # 🧪 Feedback + skip/replay signals
+│   └── personal_retrain.py         # 🧬 Personal retrain utilities
 │
 ├── config/
 │   └── genre_eq_mapping.json      # 📝 Editable genre→EQ mappings (206 genres)
 │
 ├── models/
-│   └── genre_classifier_rf.pkl    # Trained Random Forest model (86% accuracy)
+│   ├── genre_classifier_rf.pkl    # Trained Random Forest model (~87% accuracy)
+│   ├── genre_metadata_classifier.pkl  # Metadata preset model
+│   └── genre_cnn.pt               # Optional CNN model
 │
 ├── state/
 │   ├── ml_predictions.csv         # 💾 Persistent ML cache with audit trail
 │   ├── spotify_token.json         # OAuth tokens
+│   ├── listener_profile.json      # 📊 Adaptive listening profile
 │   └── history.json               # Conversation history
 │
 ├── music_dataset/                 # 🎵 Training data & track database
@@ -141,8 +152,11 @@ ARIA now **learns, remembers, and adapts** with a multi-tier pipeline:
    │       💾 Previously classified → instant hit
    ├─→ 3️⃣ Local database (1,449 tracks)
    │       track_genre_clusters.csv
-   └─→ 4️⃣ ML Classifier (fallback)
-           30-sec preview → features → genre → save to cache
+      ├─→ 4️⃣ Metadata Classifier (fallback)
+      │       popularity → preset (low confidence)
+      └─→ 5️⃣ ML Classifiers (fallback)
+         30-sec preview → RF features → genre → save to cache
+         Optional CNN → mel-spectrogram → genre
 ```
 
 ### 🧠 Persistent Memory (Offline Cache)
@@ -166,8 +180,8 @@ python auto_eq.py --prune    # Prune to last 10K entries
 
 | Property | Value |
 |----------|-------|
-| **Model Version** | `GTZAN_RF_v1.0` |
-| **Accuracy** | ~86% (Random Forest, 10 classes) |
+| **Model Version** | `GTZAN_RF_v1.1` |
+| **Accuracy** | ~87% (Random Forest, 10 classes) |
 | **Features** | 58 total (MFCCs, Chroma, Spectral, Tempo, ZCR) |
 
 | Dataset | Samples | Description |
@@ -177,6 +191,25 @@ python auto_eq.py --prune    # Prune to last 10K entries
 | Spotify Tracks | 1,449 | Local metadata |
 
 **Genres:** `blues` `classical` `country` `disco` `hiphop` `jazz` `metal` `pop` `reggae` `rock`
+
+### 🧠 CNN Audio Classifier (Optional)
+
+Lightweight PyTorch CNN using mel-spectrograms. Best for mixed or complex tracks.
+
+| Property | Value |
+|----------|-------|
+| **Backbone** | MobileNetV2 (default) |
+| **Validation Accuracy** | ~76% (quick run) |
+| **Input** | 2D mel-spectrogram image |
+
+Enable with `USE_CNN_GENRE=true` in config.
+
+### 📊 Adaptive Listening Profile
+
+Aria builds a persistent profile in `state/listener_profile.json`:
+- Genre affinities (likes/dislikes)
+- Skip patterns and preset preferences
+- Used for confidence boosting and optional CNN bias
 
 ### 🎚️ EQ Presets (19 Total)
 
@@ -198,10 +231,85 @@ python auto_eq.py --prune    # Prune to last 10K entries
 
 📝 Editable via `config/genre_eq_mapping.json` (206 genres)
 
+### 🎯 Personalized CNN Audio Classifier
+
+After 330+ tracks of listening, ARIA trained a personalized CNN on your taste:
+
+| Property | Value |
+|----------|-------|
+| **Training Tracks** | 330 (recorded: Jan 16-18, 2026) |
+| **Genres Learned** | 77 (metal, synthwave, latin, rock, etc.) |
+| **Model Type** | PyTorch CNN (MobileNetV2 backbone) |
+| **Training Accuracy** | 94% (training set) |
+| **Validation Accuracy** | **72.5%** (holdout test set) |
+| **Profile Bias** | Yes (metal/synthwave/nu-metal weighted 2-3x) |
+| **Augmentation** | Pitch shift, time stretch, mel-spectrogram flips |
+
+**What it does:**
+- Detects your favorite genres (metal, synthwave, nu-metal) at >90% confidence
+- Falls back to Random Forest for unknown tracks
+- Blends EQ presets when two genres are equally likely
+- Auto-improves via listener profile (skips, dwell time)
+
+**Retraining Schedule:**
+After 48+ hours of listening (target: early February), retrain:
+```bash
+python -m core.genre_cnn --train --epochs 25 --augment --backbone mobilenet_v2 --profile-bias
+```
+
+Model location: `models/genre_cnn.pt` + `models/genre_cnn_labels.json`
+
+### 🎛️ DSP Hardware Control (B2 Audio)
+
+ARIA can **auto-switch B2 Audio DSP presets** based on genre (Jetson + B2 via USB).
+
+**Status:** Protocol reverse-engineering toolkit ready, awaiting Wireshark capture.
+
+**What's Available:**
+- `core/dsp_controller.py` — USB/serial control + Android fallback
+- `scripts/capture_b2_protocol.md` — Windows prototype guide  
+- `scripts/test_b2_dsp.py` — Protocol testing tool
+- `config/b2_protocol.json.example` — Command template
+
+**Workflow:**
+
+1. **Windows Prototype** (reverse-engineer)
+   ```bash
+   # Install Wireshark + USBPcap
+   # Capture USB traffic while changing B2 presets
+   # Extract hex commands
+   ```
+
+2. **Test Locally**
+   ```cmd
+   python scripts/test_b2_dsp.py --port COM3 --scan
+   python scripts/test_b2_dsp.py --port COM3 --hex A50300FF02B9
+   ```
+
+3. **Document Protocol**
+   ```json
+   {
+     "preset_change": {
+       "template": "A50300FF00B8",
+       "notes": "Replace byte 4 with preset_id (0-7)"
+     }
+   }
+   ```
+
+4. **Deploy to Jetson**
+   ```bash
+   # Copy config/b2_protocol.json to Jetson
+   # Update config.py: DSP_PORT = "/dev/ttyUSB0"
+   # Set: USE_HARDWARE_DSP = True
+   # Auto EQ now switches presets via USB
+   ```
+
+**Reference:** [Capture Guide](scripts/capture_b2_protocol.md) | [Testing Tool](scripts/test_b2_dsp.py)
+
 ### Usage
 
 ```bash
-python auto_eq.py              # Full mode with ML fallback
+python auto_eq.py              # Full mode with personalized CNN + ML fallback
 python auto_eq.py --driving    # Driving mode (short phrases, 60s cooldown)
 python auto_eq.py --no-voice   # Silent mode
 python auto_eq.py --no-ml      # Disable ML fallback
@@ -215,6 +323,20 @@ For YouTube, local files, or any system audio:
 ```bash
 python live_audio_analyzer.py
 ```
+
+### 🔧 Reference Test Hardware (Audio)
+
+Tested reference setup for Project Aria audio tuning:
+
+- Rockford Fosgate P1675 (rear)
+- Rockford Fosgate R165-S + tweeters (front)
+- Rockford Fosgate Punch P300-12 sub
+- Rockford Fosgate RFK8 amp wiring kit
+- Rockford Fosgate P400X4 Punch 4-channel amplifier
+- RECOIL RCK44 4-gauge amp wiring kit with OFC RCA cable
+- Sony XAV-AX4000 head unit (Wireless CarPlay/Android Auto, Maestro ready)
+- B2 Audio 4v 10-channel DSP (96 kHz / 32-bit, BT iOS/Android app)
+- Amazon Basics sound deadening mats (14.5 x 10, pack of 10)
 
 ---
 

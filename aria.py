@@ -9,6 +9,8 @@ import json
 import asyncio
 import sys
 import os
+import random
+import time as time_module
 from pathlib import Path
 
 # Optional imports are initialized to avoid "possibly unbound" warnings
@@ -82,6 +84,7 @@ if NIC_ENABLED:
 current_language = DEFAULT_LANGUAGE
 current_personality = DEFAULT_PERSONALITY
 connected_clients = set()
+last_dual_banter_time = 0.0
 
 # Initialize state manager and response validator
 import config as config_module
@@ -240,6 +243,36 @@ CRITICAL: Vehicle is in DRIVING mode. Your responses MUST be:
         if current_state == VehicleState.DRIVING:
             return "Monitoring."
         return "Something went wrong. Let me try again."
+
+
+def get_other_persona(persona: str) -> str:
+    return "nova" if persona == "aria" else "aria"
+
+
+def should_dual_banter(current_state) -> bool:
+    global last_dual_banter_time
+    if not DUAL_PERSONA_ENABLED:
+        return False
+    if current_state == VehicleState.DRIVING:
+        return False
+    now = time_module.time()
+    if now - last_dual_banter_time < DUAL_PERSONA_COOLDOWN_SEC:
+        return False
+    return random.random() < DUAL_PERSONA_CHANCE
+
+
+def generate_banter_reply(primary_persona: str, other_persona: str, primary_reply: str, language: str):
+    banter_prompt = (
+        f"Respond to {primary_persona}'s reply in 1–2 sentences. "
+        f"Be playful, challenge or question gently, and stay on-topic. "
+        f"Don't address the user directly.\n\n"
+        f"Reply: {primary_reply}"
+    )
+    return chat_with_lm_studio(
+        banter_prompt,
+        persona_override=other_persona,
+        language_override=language,
+    )
 
 # ========== HTTP SERVER (For STT endpoint and static files) ==========
 
@@ -493,6 +526,55 @@ async def handle_websocket(websocket):
                         play_audio(audio_path)
                 
                 await websocket.send(json.dumps(response_message))
+
+                # Optional dual-persona banter
+                car_status = obd_monitor.get_live_data()
+                current_state = state_manager.get_current_state(car_status)
+                if should_dual_banter(current_state):
+                    other_persona = get_other_persona(response_persona)
+                    banter_reply = generate_banter_reply(
+                        response_persona,
+                        other_persona,
+                        reply,
+                        turn_language,
+                    )
+                    if banter_reply:
+                        global last_dual_banter_time
+                        last_dual_banter_time = time_module.time()
+                        banter_ui = get_persona_ui_config(other_persona) if TTS_ROUTER_AVAILABLE and get_persona_ui_config else {}
+                        banter_message = {
+                            'type': 'response',
+                            'text': banter_reply,
+                            'persona': other_persona,
+                            'thinking': False,
+                            'ui': banter_ui
+                        }
+
+                        if TTS_ROUTER_AVAILABLE and speak_for_persona_async:
+                            tts_result = await speak_for_persona_async(banter_reply, other_persona, turn_language)
+                            if tts_result.get('success'):
+                                banter_message['voice'] = {
+                                    'audio_path': tts_result['audio_path'],
+                                    'backend': tts_result['backend'],
+                                    'voice_id': tts_result.get('voice_id', ''),
+                                    'lang': turn_language
+                                }
+                        elif offline_tts_enabled and speak_async:
+                            tts_result = await speak_async(banter_reply)
+                            if tts_result.get('success'):
+                                audio_path = Path(tts_result['audio_path'])
+                                banter_message['voice'] = {
+                                    'audio_path': f'/tts/{audio_path.name}',
+                                    'backend': tts_result.get('backend', 'offline'),
+                                    'voice_id': '',
+                                    'lang': turn_language
+                                }
+                        else:
+                            audio_path = generate_voice(banter_reply)
+                            if audio_path:
+                                play_audio(audio_path)
+
+                        await websocket.send(json.dumps(banter_message))
                 cleanup_old_files()
             
             elif data['type'] == 'command':
@@ -754,6 +836,23 @@ def console_mode():
             # Print response
             persona_name = PERSONALITIES[response_persona]['name']
             print(f"\n💜 {persona_name}: {reply}\n")
+
+            # Optional dual-persona banter in console mode
+            status = obd_monitor.get_live_data()
+            current_state = state_manager.get_current_state(status)
+            if should_dual_banter(current_state):
+                other_persona = get_other_persona(response_persona)
+                banter_reply = generate_banter_reply(
+                    response_persona,
+                    other_persona,
+                    reply,
+                    turn_language,
+                )
+                if banter_reply:
+                    global last_dual_banter_time
+                    last_dual_banter_time = time_module.time()
+                    other_name = PERSONALITIES[other_persona]['name']
+                    print(f"💬 {other_name}: {banter_reply}\n")
             
             # Generate voice (offline or ElevenLabs)
             if offline_tts_enabled and speak:

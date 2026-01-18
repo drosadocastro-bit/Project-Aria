@@ -1,0 +1,52 @@
+{
+  "_comment": "B2 Audio DSP Protocol - Populate after Wireshark capture",
+  "_instructions": "1. Capture USB traffic in Wireshark while changing presets\n2. Find hex pattern differences\n3. Update 'template' field below\n4. Test with: python scripts/test_b2_dsp.py --test-preset 2\n5. Rename to b2_protocol.json when working",
+  
+  "preset_change": {
+    "template": "A50300FF00B8",
+    "description": "Change DSP preset by ID (0-7)",
+    "notes": "Replace byte at index 4 (0x00) with preset_id. Last byte is checksum (sum of all bytes & 0xFF).",
+    "examples": {
+      "preset_0": "A50300FF00B8",
+      "preset_1": "A50300FF01B9",
+      "preset_2": "A50300FF02BA",
+      "preset_3": "A50300FF03BB"
+    },
+    "checksum_type": "sum",
+    "checksum_offset": 5
+  },
+  
+  "volume_set": {
+    "template": "A50400FF00C9",
+    "description": "Set master volume (0-100)",
+    "notes": "Replace byte 4 with volume level",
+    "range": [0, 100],
+    "checksum_type": "sum",
+    "checksum_offset": 5
+  },
+  
+  "eq_band": {
+    "template": "A50800FF000000000000",
+    "description": "Adjust individual EQ band",
+    "notes": "Bytes 4-5: band index (0-9 for 10-band EQ), Bytes 6-7: gain in 0.1 dB steps (-120 to +120 = -12dB to +12dB)",
+    "checksum_type": "sum",
+    "checksum_offset": 9
+  },
+  
+  "status_query": {
+    "template": "A50100FE",
+    "description": "Query current DSP state",
+    "notes": "Response should contain current preset ID and volume",
+    "response_length": 16
+  },
+  
+  "_reverse_engineering_notes": {
+    "start_byte": "0xA5 (common for many protocols)",
+    "command_byte": "Index 1 - determines command type (0x03=preset, 0x04=volume, 0x08=eq_band)",
+    "length_byte": "Index 2 - payload length",
+    "padding": "Index 3 - usually 0xFF",
+    "data": "Index 4+ - command-specific data",
+    "checksum": "Last byte - sum of all previous bytes, truncated to 1 byte",
+    "discovered_commands": []
+  }
+}
