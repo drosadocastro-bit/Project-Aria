@@ -1,0 +1,79 @@
+{
+  "tracks": [
+    {
+      "filename": "metal_baseline_001.wav",
+      "genre": "metal",
+      "confidence": 0.98,
+      "reason": "Classic thrash metal - immutable baseline, consistent throughout deployment"
+    },
+    {
+      "filename": "synthwave_baseline_001.wav",
+      "genre": "synthwave",
+      "confidence": 0.97,
+      "reason": "Neon Drive vibe - consistent retrowave signature"
+    },
+    {
+      "filename": "phonk_baseline_001.wav",
+      "genre": "phonk",
+      "confidence": 0.96,
+      "reason": "Lo-fi phonk - distinctive sub bass pattern"
+    },
+    {
+      "filename": "ambient_baseline_001.wav",
+      "genre": "ambient",
+      "confidence": 0.95,
+      "reason": "Chill ambient - minimal percussion baseline"
+    },
+    {
+      "filename": "rock_baseline_001.wav",
+      "genre": "rock",
+      "confidence": 0.97,
+      "reason": "Classic rock - guitar-driven baseline"
+    },
+    {
+      "filename": "hiphop_baseline_001.wav",
+      "genre": "hiphop",
+      "confidence": 0.96,
+      "reason": "Hip-hop beat - distinctive drums + bass"
+    },
+    {
+      "filename": "jazz_baseline_001.wav",
+      "genre": "jazz",
+      "confidence": 0.94,
+      "reason": "Jazz standards - complex chord progressions"
+    },
+    {
+      "filename": "classical_baseline_001.wav",
+      "genre": "classical",
+      "confidence": 0.95,
+      "reason": "Orchestral piece - string instruments dominant"
+    },
+    {
+      "filename": "pop_baseline_001.wav",
+      "genre": "pop",
+      "confidence": 0.96,
+      "reason": "Modern pop - commercial structure"
+    },
+    {
+      "filename": "reggae_baseline_001.wav",
+      "genre": "reggae",
+      "confidence": 0.95,
+      "reason": "Reggae rhythm - distinctive offbeat"
+    }
+  ],
+  "metadata": {
+    "created": "2026-01-18",
+    "version": "1.0",
+    "purpose": "Ground-truth validation set for CNN model drift detection",
+    "locked": true,
+    "description": "10 hand-selected baseline tracks across core genres. Used to validate model accuracy monthly and detect performance degradation. These files should NOT change once validation is live.",
+    "deployment_stage": "pre-deployment",
+    "total_tracks": 10,
+    "notes": [
+      "Each track represents a distinct genre signature",
+      "Confidence scores reflect how representative the track is of its genre",
+      "Locked=true means no new tracks should be added during production",
+      "Run monthly: python core/model_validator.py to validate against this set"
+    ]
+  }
+}

@@ -2,10 +2,12 @@
 PyTorch CNN Genre Classifier
 Trains on GTZAN spectrogram images (music_dataset/Data/images_original)
 Provides lightweight audio prediction using mel-spectrograms.
+Integrates with ModelValidator for drift detection.
 """
 
 import argparse
 import json
+import logging
 from pathlib import Path
 import os
 from typing import Optional, cast
@@ -17,6 +19,9 @@ from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, transforms
 
 from core.listener_profile import ListenerProfile
+from core.model_validator import ModelValidator
+
+logger = logging.getLogger(__name__)
 
 
 DATASET_IMAGES = Path(__file__).parent.parent / "music_dataset" / "Data" / "images_original"
@@ -100,6 +105,74 @@ class CNNGenreClassifier:
         self.model.to(self.device)
         self.model.eval()
         self.is_trained = True
+        
+        # Initialize validator
+        self.validator = None
+        self._init_validator()
+        self.inference_count = 0
+
+    def _init_validator(self):
+        """Initialize model validator with config"""
+        try:
+            import config
+            validator_config = {
+                'validation_reference_file': str(config.VALIDATION_REFERENCE_FILE),
+                'validation_models_dir': str(config.VALIDATION_MODELS_DIR),
+                'drift_threshold': config.VALIDATION_DRIFT_THRESHOLD,
+                'min_reference_accuracy': config.VALIDATION_MIN_ACCURACY,
+                'validation_log_file': str(config.VALIDATION_LOG_FILE),
+            }
+            self.validator = ModelValidator(validator_config)
+            logger.info(f"Validator initialized with {self.validator.reference_set.size()} reference tracks")
+        except Exception as e:
+            logger.warning(f"Validator init failed: {e}")
+            self.validator = None
+    
+    def validate_on_reference_set(self) -> Optional[dict]:
+        """
+        Run validation on reference set (manual check or scheduled)
+        
+        Returns:
+            ValidationMetrics dict or None
+        """
+        if not self.validator or not self.validator.reference_set.size():
+            logger.warning("No reference set available for validation")
+            return None
+        
+        try:
+            metrics = self.validator.validate(self.model, None, str(self.model_path))
+            if metrics:
+                logger.info(f"✓ Reference validation: {metrics.accuracy:.2f}% "
+                          f"({metrics.notes})")
+                return metrics.to_dict()
+            return None
+        except Exception as e:
+            logger.error(f"Validation failed: {e}")
+            return None
+    
+    def get_validation_report(self) -> dict:
+        """Get full validation report (for monitoring)"""
+        if not self.validator:
+            return {"status": "no_validator"}
+        return self.validator.get_validation_report()
+        self._init_validator()
+    
+    def _init_validator(self):
+        """Initialize model validator with config"""
+        try:
+            import config
+            validator_config = {
+                'validation_reference_file': str(config.VALIDATION_REFERENCE_FILE),
+                'validation_models_dir': str(config.VALIDATION_MODELS_DIR),
+                'drift_threshold': config.VALIDATION_DRIFT_THRESHOLD,
+                'min_reference_accuracy': config.VALIDATION_MIN_ACCURACY,
+                'validation_log_file': str(config.VALIDATION_LOG_FILE),
+            }
+            self.validator = ModelValidator(validator_config)
+            logger.info(f"Validator initialized with {self.validator.reference_set.size()} reference tracks")
+        except Exception as e:
+            logger.warning(f"Validator init failed: {e}")
+            self.validator = None
 
     def _transform(self):
         return transforms.Compose([
@@ -120,6 +193,11 @@ class CNNGenreClassifier:
         with torch.no_grad():
             logits = self.model(tensor)
             probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
+        
+        # Track inference for periodic validation
+        self.inference_count += 1
+        self._check_periodic_validation()
+        
         return self._format_prediction(probs)
 
     def predict_audio(self, audio_path: Path, target_sr: int = 22050):
@@ -157,6 +235,11 @@ class CNNGenreClassifier:
         with torch.no_grad():
             logits = self.model(mel_img)
             probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
+        
+        # Track inference for periodic validation
+        self.inference_count += 1
+        self._check_periodic_validation()
+        
         return self._format_prediction(probs)
 
     def _format_prediction(self, probs):
@@ -172,6 +255,24 @@ class CNNGenreClassifier:
             "top_3": top_3,
             "all_probabilities": {self.labels[i]: float(probs[i]) for i in range(len(self.labels))}
         }
+    
+    def _check_periodic_validation(self):
+        """
+        Periodically validate on reference set (every N inferences)
+        Triggered during normal predict_audio/predict_image calls
+        """
+        if not self.validator:
+            return
+        
+        try:
+            import config
+            check_interval = config.VALIDATION_CHECK_INTERVAL
+            
+            if self.inference_count % check_interval == 0:
+                logger.info(f"Periodic validation triggered ({self.inference_count} inferences)")
+                self.validate_on_reference_set()
+        except Exception as e:
+            logger.debug(f"Periodic validation check failed: {e}")
 
 
 def train(epochs=8, batch_size=32, lr=1e-3, train_split=0.8, augment=False, backbone="small", profile_bias=False):

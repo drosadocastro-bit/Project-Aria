@@ -1,0 +1,109 @@
+"""
+VALIDATION SYSTEM - QUICK START
+
+What We Built:
+- core/model_validator.py: Main validation engine
+- core/genre_cnn.py: Integrated validator hooks
+- config.py: Validation settings
+- config/reference_validation_set.json: Ground-truth tracks
+- scripts/setup_validation.py: Initialize reference set
+- scripts/validation_dashboard.py: Monitor drift
+- docs/VALIDATION_SYSTEM.md: Full documentation
+
+Key Features:
+1. REFERENCE VALIDATION SET
+   - 10 immutable baseline tracks (one per genre)
+   - Ground truth labels (no drift)
+   - Monthly validation check against these
+   
+2. DRIFT DETECTION
+   - Alert if accuracy drops > 5%
+   - Alert if accuracy < 75% threshold
+   - Track all validations in JSON history
+   
+3. MODEL MANAGEMENT
+   - Keep 3 model checkpoints (current, backup, previous)
+   - Auto-backup before retraining
+   - Rollback to last good model on failure
+   
+4. MONITORING DASHBOARD
+   - Weekly validation dashboard
+   - Trend analysis (7-day rolling average)
+   - Recommendations for action
+
+Usage Timeline:
+
+PRE-DEPLOYMENT (Jan-Aug 2026):
+  1. Run: python scripts/setup_validation.py
+     → Creates reference_validation_set.json
+  
+  2. Add your 10 baseline tracks to accessible location
+     → metal_baseline_001.wav, synthwave_baseline_001.wav, etc.
+  
+  3. Train model: python -m core.genre_cnn --train --profile-bias
+  
+  4. Test validation: python scripts/validation_dashboard.py
+     → Should show baseline accuracy established
+
+DEPLOYMENT (Aug-Dec 2026):
+  1. Model automatically validates every 1000 inferences
+     → In auto_eq.py or aria.py
+  
+  2. Weekly: python scripts/validation_dashboard.py
+     → Check for drift alerts
+  
+  3. Monthly: Retrain if accuracy < 75%
+     → python -m core.genre_cnn --train
+  
+  4. Compare new vs old on reference set
+     → If new accuracy >= 75%, deploy
+     → Otherwise, keep old model
+
+CRISIS (Accuracy Crashes):
+  1. Automatic rollback (if enabled):
+     → validator.rollback_model(current_model_path)
+  
+  2. Manual rollback:
+     → cp models/backups/genre_cnn_backup_*.pt models/genre_cnn.pt
+
+Configuration (in config.py):
+  VALIDATION_REFERENCE_FILE = "config/reference_validation_set.json"
+  VALIDATION_DRIFT_THRESHOLD = 5.0        # % drop to alert
+  VALIDATION_MIN_ACCURACY = 75.0          # Minimum acceptable
+  VALIDATION_CHECK_INTERVAL = 1000        # Validate every N inferences
+  VALIDATION_AUTO_ROLLBACK = False        # Enable after 1 month
+
+Pro Tips:
+- Reference set must NOT change after first deployment
+- Keep reference tracks in version control (they're immutable)
+- Run validation_dashboard.py before any major changes
+- Document why accuracy changed in commit messages
+- Test rollback procedure at least once before production
+
+Example: Manual validation in code
+
+    from core.genre_cnn import CNNGenreClassifier
+    
+    clf = CNNGenreClassifier()
+    
+    # Validate on reference set
+    metrics = clf.validate_on_reference_set()
+    print(f"Accuracy: {metrics['accuracy']}%")
+    
+    # Get full report
+    report = clf.get_validation_report()
+    print(report)
+    # {
+    #   "baseline_accuracy": 85.0,
+    #   "latest_accuracy": 87.5,
+    #   "drift_alerts": 0,
+    #   "average_recent": 86.8
+    # }
+
+Next Steps:
+1. Add 10 baseline tracks to reference_validation_set.json
+2. Run first validation: python scripts/setup_validation.py
+3. Read docs/VALIDATION_SYSTEM.md for full details
+4. Schedule weekly: python scripts/validation_dashboard.py
+5. Schedule monthly: Retraining if needed
+"""
