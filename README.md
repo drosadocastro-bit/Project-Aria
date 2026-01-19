@@ -1,9 +1,9 @@
-# 🚗 Project ARIA — GTI AI Copilot (Nova Edition)
+# 🚗 Project ARIA — Vehicle AI Copilot (Nova/Aria Edition)
 
 > **Version:** 0.9.0 (Personalized CNN + B2 DSP Integration)  
-> **Status:** Private Development — Public Release Planned Q2 2026  
+> **Status:** Private Development — Public Release Planned Fall 2026  
 
-**The dual-soul AI copilot for your VW GTI MK6**  
+**The dual-soul AI copilot for your Vehicle**  
 Combining holographic personality, real-time car data, and intelligent audio.  
 
 > *"Aria drives with reason. Nova listens with emotion."* 🌌  
