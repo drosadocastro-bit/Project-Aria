@@ -1,4 +1,4 @@
-# 🚗 Project ARIA — Vehicle AI Copilot (Nova/Aria Edition)
+9# 🚗 Project ARIA — Vehicle AI Copilot (Nova/Aria Edition)
 
 > **Version:** 0.9.0 (Personalized CNN + B2 DSP Integration)  
 > **Status:** Private Development — Public Release Planned Fall 2026  
@@ -263,7 +263,7 @@ Model location: `models/genre_cnn.pt` + `models/genre_cnn_labels.json`
 
 ARIA can **auto-switch B2 Audio DSP presets** based on genre (Jetson + B2 via USB).
 
-**Status:** Protocol reverse-engineering toolkit ready, awaiting Wireshark capture.
+**Status:** Protocol reverse-engineering toolkit in progress, tool for use, Wireshark capture.
 
 **What's Available:**
 - `core/dsp_controller.py` — USB/serial control + Android fallback
