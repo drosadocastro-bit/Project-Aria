@@ -324,7 +324,7 @@ For YouTube, local files, or any system audio:
 python live_audio_analyzer.py
 ```
 
-### 🔧 Reference Test Hardware (Audio)
+### 🔧 Reference Test Hardware (Audio,Vehicle)
 
 Tested reference setup for Project Aria audio tuning:
 
@@ -337,7 +337,7 @@ Tested reference setup for Project Aria audio tuning:
 - Sony XAV-AX4000 head unit (Wireless CarPlay/Android Auto, Maestro ready)
 - B2 Audio 4v 10-channel DSP (96 kHz / 32-bit, BT iOS/Android app)
 - Amazon Basics sound deadening mats (14.5 x 10, pack of 10)
-
+-Volkswagen GTI MK6 CCTA 2.0T
 ---
 
 ## 🧰 Setup
