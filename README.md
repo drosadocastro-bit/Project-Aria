@@ -327,7 +327,7 @@ python live_audio_analyzer.py
 ### 🔧 Reference Test Hardware (Audio,Vehicle)
 
 Tested reference setup for Project Aria audio tuning:
-
+- Nvidia Orin Nano Super 8gb and Rasberry PI Zero W2 (Vision)
 - Rockford Fosgate P1675 (rear)
 - Rockford Fosgate R165-S + tweeters (front)
 - Rockford Fosgate Punch P300-12 sub
