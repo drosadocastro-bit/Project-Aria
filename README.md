@@ -440,7 +440,7 @@ $ python auto_eq.py --stats
 ARIA/NOVA is not an autonomous driving system and does not replace human judgment.
 📌 What This Project Is Not
 ❌ Not an autonomous driving system
-❌ Not an emotional companion
+❌ Not an emotional only validation
 ❌ Not a self-directing agent
 ❌ Not a replacement for human operators
 ARIA/NOVA is a decision support system, not an authority.
@@ -461,7 +461,7 @@ MIT License
 ---
 
 <p align="center">
-  <i>Built with 💜 for the MK6 GTI community</i><br>
+  <i>Built with 💜 for car and audio enthusiasm community</i><br>
   <b>Nova remembers. Aria drives. Together, they ride.</b><br><br>
   🚗 <code>v0.9.0</code> – Nova Edition
 </p>
