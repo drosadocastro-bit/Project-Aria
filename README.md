@@ -461,7 +461,7 @@ MIT License
 ---
 
 <p align="center">
-  <i>Built with 💜 for car and audio enthusiasm community</i><br>
+  <i>Built with 💜 for cars and audio enthusiasms communities</i><br>
   <b>Nova remembers. Aria drives. Together, they ride.</b><br><br>
   🚗 <code>v0.9.0</code> – Nova Edition
 </p>
