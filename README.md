@@ -1,7 +1,7 @@
 # 🚗 Project ARIA — Vehicle AI Copilot (Nova Edition)
 
 > **Version:** 0.9.0 (Personalized CNN + B2 DSP Integration)  
-> **Status:** Private Development — Public Release Planned Q2 2026  
+> **Status:**  — Public Release Planned Fall 2026  
 
 **The dual-soul AI copilot for your Vehicle**  
 Combining holographic personality, real-time car data, and intelligent audio.  
